@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect } from 'react';
-import useLocalStorage from './useLocalStorage';
+import useLocalStorage from './useLocalStorage.ts';
 
 type Theme = 'light' | 'dark';
 

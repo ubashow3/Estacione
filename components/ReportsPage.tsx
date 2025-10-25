@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Vehicle, VehicleStatus, PaymentMethod } from '../types';
+import { Vehicle, VehicleStatus, PaymentMethod } from '../types.ts';
 
 interface ReportsPageProps {
   vehicles: Vehicle[];

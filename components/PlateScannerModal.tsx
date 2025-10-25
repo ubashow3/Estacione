@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { XIcon } from './Icons';
+import { XIcon } from './Icons.tsx';
 
 // Tesseract é carregado a partir de um script CDN no index.html
 // FIX: Added proper type declarations for the Tesseract.js library loaded via CDN.

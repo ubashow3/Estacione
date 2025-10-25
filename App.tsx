@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import OperationalArea from './components/OperationalArea';
-import AdminArea from './components/AdminArea';
-import ReportsPage from './components/ReportsPage';
-import useLocalStorage from './hooks/useLocalStorage';
-import { Vehicle, Settings, VehicleStatus, PaymentMethod } from './types';
-import { useTheme } from './hooks/useTheme';
-import { SunIcon, MoonIcon } from './components/Icons';
+import OperationalArea from './components/OperationalArea.tsx';
+import AdminArea from './components/AdminArea.tsx';
+import ReportsPage from './components/ReportsPage.tsx';
+import useLocalStorage from './hooks/useLocalStorage.ts';
+import { Vehicle, Settings, VehicleStatus, PaymentMethod } from './types.ts';
+import { useTheme } from './hooks/useTheme.ts';
+import { SunIcon, MoonIcon } from './components/Icons.tsx';
 
 // Default initial settings
 const INITIAL_SETTINGS: Settings = {

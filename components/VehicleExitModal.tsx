@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Vehicle, Settings, PaymentMethod } from '../types';
-import { ArrowLeftIcon } from './Icons';
+import { Vehicle, Settings, PaymentMethod } from '../types.ts';
+import { ArrowLeftIcon } from './Icons.tsx';
 
 // A biblioteca qrcode.js é carregada via CDN no index.html
 declare const QRCode: any;

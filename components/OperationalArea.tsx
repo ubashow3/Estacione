@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { Vehicle, Settings, VehicleStatus, PaymentMethod } from '../types';
-import { CameraIcon } from './Icons';
-import PlateScannerModal from './PlateScannerModal';
-import VehicleExitPage from './VehicleExitModal';
+import { Vehicle, Settings, VehicleStatus, PaymentMethod } from '../types.ts';
+import { CameraIcon } from './Icons.tsx';
+import PlateScannerModal from './PlateScannerModal.tsx';
+import VehicleExitPage from './VehicleExitModal.tsx';
 
 interface OperationalAreaProps {
   vehicles: Vehicle[];
