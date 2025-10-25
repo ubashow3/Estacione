@@ -1,0 +1,7 @@
+{
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "name": "Copy of estacionamento",
+  "description": "Gerenciador de estacionamento"
+}
