@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="bg-slate-100 dark:bg-black">
+<html lang="pt-BR" class="bg-slate-100">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -22,26 +22,44 @@
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
-
-    <!-- Babel Standalone for in-browser JSX/TSX transpilation -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Import Map for React -->
-    <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.2.0",
-    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-    "uuid": "https://esm.sh/uuid@9.0.1",
-    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
-    "react/": "https://esm.sh/react@18.2.0/",
-    "@capacitor/cli": "https://aistudiocdn.com/@capacitor/cli@^7.4.4"
-  }
-}
-</script>
+    <style>
+      /* Esconde a barra de rolagem para elementos com overflow */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+      }
+    </style>
 </head>
-<body>
-    <div id="root"></div>
-    <script type="text/babel" data-type="module" data-presets="react,typescript" src="./index.tsx"></script>
+<body class="font-sans">
+    <div id="app-container" class="min-h-screen bg-slate-100 dark:bg-slate-900">
+      <header class="bg-white shadow-md dark:bg-slate-900 dark:border-b dark:border-slate-700">
+        <div class="container mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center">
+          <div class="flex items-center gap-3 mb-4 sm:mb-0">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-8 w-8 text-blue-600 dark:text-slate-200"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.125-.504 1.125-1.125V14.25m-17.25 4.5v-1.875a3.375 3.375 0 003.375-3.375h9.75a3.375 3.375 0 003.375 3.375v1.875m-17.25 4.5h15M6.375 11.25L12 5.625l5.625 5.625"></path></svg>
+            <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-100">Pare Aqui!!</h1>
+          </div>
+          <div class="flex items-center gap-4">
+            <nav class="flex items-center space-x-2 p-1 bg-slate-200 dark:bg-slate-800 rounded-lg">
+              <button id="nav-operational" data-view="operational" class="nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors bg-blue-600 text-white shadow dark:bg-slate-600">Operacional</button>
+              <button id="nav-reports" data-view="reports" class="nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors bg-white text-slate-600 hover:bg-slate-100 dark:bg-transparent dark:text-slate-300 dark:hover:bg-slate-600">Relatórios</button>
+              <button id="nav-admin" data-view="admin" class="nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors bg-white text-slate-600 hover:bg-slate-100 dark:bg-transparent dark:text-slate-300 dark:hover:bg-slate-600">Configurações</button>
+            </nav>
+            <button id="theme-toggle" class="p-2 rounded-full text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors" aria-label="Toggle theme">
+                <span id="theme-icon-moon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-6 w-6"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"></path></svg></span>
+                <span id="theme-icon-sun" class="hidden"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-6 w-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.95-4.243l-1.59-1.59M3 12H.75m4.243-4.95l1.59-1.59"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"></path></svg></span>
+            </button>
+          </div>
+        </div>
+      </header>
+      <main id="main-content" class="container mx-auto p-4 sm:p-8">
+        <!-- Views will be dynamically inserted here -->
+      </main>
+    </div>
+
+    <!-- Application Logic -->
+    <script type="module" src="./index.js"></script>
 </body>
 </html>
