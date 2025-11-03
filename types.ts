@@ -13,7 +13,7 @@ export enum PaymentMethod {
 export interface Vehicle {
   id: string;
   plate: string;
-  model: string;
+  brand: string;
   color: string;
   entryTime: string;
   exitTime?: string;

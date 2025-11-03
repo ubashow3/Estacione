@@ -150,10 +150,10 @@ const PlateScannerModal: React.FC<PlateScannerModalProps> = ({ isOpen, onClose, 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl p-4 sm:p-6 w-full max-w-lg flex flex-col max-h-full">
+      <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl p-4 sm:p-6 w-full max-w-lg flex flex-col max-h-full">
         <div className="flex justify-between items-center mb-4 flex-shrink-0">
-          <h2 className="text-xl font-bold text-slate-800">Escanear Placa</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">Escanear Placa</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
             <XIcon className="h-6 w-6" />
           </button>
         </div>
@@ -166,15 +166,15 @@ const PlateScannerModal: React.FC<PlateScannerModalProps> = ({ isOpen, onClose, 
           <canvas ref={canvasRef} className="hidden"></canvas>
         </div>
 
-        <div className="bg-slate-100 p-3 rounded-md text-center mb-4 flex-shrink-0">
-          <p className="text-sm font-semibold text-slate-700 h-5">{status}</p>
+        <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-md text-center mb-4 flex-shrink-0">
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 h-5">{status}</p>
           {(status.includes('Analisando') || status.includes('Carregando')) && (
-            <div className="w-full bg-slate-200 rounded-full h-2.5 mt-2">
-              <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progress * 100}%` }}></div>
+            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 mt-2">
+              <div className="bg-blue-600 dark:bg-slate-500 h-2.5 rounded-full" style={{ width: `${progress * 100}%` }}></div>
             </div>
           )}
           {recognizedText && (
-            <p className="text-2xl font-mono tracking-widest bg-white p-2 mt-2 rounded border border-slate-300">{recognizedText}</p>
+            <p className="text-2xl font-mono tracking-widest bg-white dark:bg-slate-700 dark:text-slate-100 p-2 mt-2 rounded border border-slate-300 dark:border-slate-600">{recognizedText}</p>
           )}
         </div>
         
@@ -182,7 +182,7 @@ const PlateScannerModal: React.FC<PlateScannerModalProps> = ({ isOpen, onClose, 
           <button
             onClick={captureAndRecognize}
             disabled={isInitializing || status.includes('Analisando')}
-            className="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-md shadow-sm hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
+            className="w-full bg-blue-600 dark:bg-slate-600 text-white font-semibold py-3 px-4 rounded-md shadow-sm hover:bg-blue-700 dark:hover:bg-slate-500 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
           >
             Capturar Imagem
           </button>

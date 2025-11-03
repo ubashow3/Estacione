@@ -1,8 +1,9 @@
 
+
 import React, { useState } from 'react';
 
 // FIX: Added React to the import statement to resolve "Cannot find namespace 'React'" errors.
-function useLocalStorage<T,>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
+function useLocalStorage<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
       const item = window.localStorage.getItem(key);
