@@ -21,7 +21,7 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Estilos de impressão para o cupom */
+        /* Estilos de impressão para o cupom de impressora térmica */
         @media print {
             body * {
                 visibility: hidden;
@@ -33,20 +33,49 @@
                 position: absolute;
                 left: 0;
                 top: 0;
-                width: 100%;
-                max-width: 300px; /* Largura de cupom de impressora térmica */
                 margin: 0;
-                padding: 10px;
+                padding: 5mm;
+                width: 78mm; /* Largura para papel de 80mm */
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 10pt;
+                color: #000;
+                background: #fff;
                 border: none;
-                background-color: white;
-                color: black;
+                box-shadow: none;
             }
-            #receipt-container h2, #receipt-container h3, #receipt-container p, #receipt-container div {
-                color: black;
+            #receipt-container h3 {
+                font-size: 12pt;
+                margin-bottom: 5mm;
+                text-align: center;
             }
-            #print-button {
-                display: none;
+            #receipt-container p {
+                margin: 0;
+                line-height: 1.4;
             }
+            #receipt-container p::after {
+                content: "";
+                display: table;
+                clear: both;
+            }
+            #receipt-container .float-right {
+                float: right;
+            }
+            #receipt-container p.text-xl {
+                 font-size: 11pt;
+                 margin-top: 5mm;
+            }
+            #receipt-container * {
+                color: #000 !important;
+            }
+        }
+
+        /* Custom utility to hide scrollbars */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
         }
     </style>
 </head>

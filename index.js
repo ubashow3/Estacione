@@ -1,5 +1,4 @@
 
-
 import { db } from './firebase.js';
 
 let state = {
@@ -20,15 +19,28 @@ let state = {
     paymentData: null,
     theme: localStorage.getItem('theme') || 'dark',
     paymentPollingInterval: null,
+    reportsDateFilter: 'today', // today, 7days, 15days, 30days
+    reportsPaymentFilter: 'todos', // todos, pix, dinheiro, cartao, convenio
 };
 
 
 // --- HELPERS ---
-const formatCurrency = (value) => value ? `R$ ${parseFloat(value).toFixed(2).replace('.', ',')}` : 'R$ 0,00';
+const formatCurrency = (value) => value || value === 0 ? `R$ ${parseFloat(value).toFixed(2).replace('.', ',')}` : 'R$ 0,00';
 const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
-    return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+const formatPermanence = (entryTime, exitTime) => {
+    if (!entryTime || !exitTime) return 'N/A';
+    const entry = new Date(entryTime);
+    const exit = new Date(exitTime);
+    const diffMs = exit - entry;
+    if (diffMs < 0) return 'N/A';
+    const diffMins = Math.floor(diffMs / 60000);
+    const hours = Math.floor(diffMins / 60);
+    const minutes = diffMins % 60;
+    return `${hours}h ${minutes}m`;
 };
 const debounce = (func, delay) => {
     let timeout;
@@ -107,7 +119,7 @@ const renderHeader = () => {
     
     return `
         <header class="flex flex-col items-center md:flex-row md:justify-between mb-6 space-y-4 md:space-y-0">
-            <h1 class="text-3xl font-bold text-sky-500">Pare Aqui!!</h1>
+            <h1 class="text-3xl font-bold text-sky-500 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-car-front"><path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.64 5H8.36a2 2 0 0 0-1.86 1.3L5 10l-2-2"/><path d="M5 10h14"/><path d="M5 12.5v3.76a2 2 0 0 0 1.11 1.79l.9.44a2 2 0 0 0 1.98 0l.9-.44A2 2 0 0 0 11 16.26V12.5"/><path d="M19 12.5v3.76a2 2 0 0 1-1.11 1.79l-.9.44a2 2 0 0 1-1.98 0l-.9-.44A2 2 0 0 1 13 16.26V12.5"/><path d="M5 18h.01"/><path d="M19 18h.01"/></svg>Pare Aqui!!</h1>
             <div class="flex items-center space-x-4">
                 <nav class="flex space-x-2 bg-slate-200 dark:bg-slate-800 p-1 rounded-full">
                     <button data-action="navigate" data-page="operational" class="${state.currentPage === 'operational' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Operacional</button>
@@ -180,39 +192,133 @@ const renderOperationalPage = () => {
 };
 
 const renderReportsPage = () => {
-    const paidVehicles = state.vehicles.filter(v => v.status === 'paid').sort((a, b) => new Date(b.exitTime) - new Date(a.exitTime));
-    const totalRevenue = paidVehicles.filter(v => v.paymentMethod !== 'convenio').reduce((acc, v) => acc + (v.amountPaid || 0), 0);
-    const vehicleList = paidVehicles.length > 0 ? paidVehicles.map(v => `
-        <tr class="border-b border-slate-200 dark:border-slate-700">
-            <td class="p-3 font-mono">${v.plate}</td>
-            <td class="p-3">${formatDate(v.entryTime)}</td>
-            <td class="p-3">${formatDate(v.exitTime)}</td>
-            <td class="p-3 capitalize">${v.paymentMethod || 'N/A'}</td>
-            <td class="p-3 text-right font-semibold">${formatCurrency(v.amountPaid)}</td>
-        </tr>
-    `).join('') : '<tr><td colspan="5" class="text-center p-4 text-slate-500 dark:text-slate-400">Nenhum registro de saída.</td></tr>';
+    // --- Filtering Logic ---
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    return `
-        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
-            <h2 class="text-2xl font-bold mb-4">Relatórios de Faturamento</h2>
-            <div class="mb-6 p-4 bg-sky-100 dark:bg-sky-900/50 rounded-lg">
-                <p class="text-lg text-slate-600 dark:text-slate-300">Faturamento Total (exceto convênio):</p>
-                <p class="text-4xl font-bold text-sky-600 dark:text-sky-400">${formatCurrency(totalRevenue)}</p>
+    const dateFilters = {
+        today: (v) => new Date(v.exitTime) >= today,
+        '7days': (v) => new Date(v.exitTime) >= new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000),
+        '15days': (v) => new Date(v.exitTime) >= new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000),
+        '30days': (v) => new Date(v.exitTime) >= new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000),
+    };
+
+    const allPaidVehicles = state.vehicles.filter(v => v.status === 'paid' && v.exitTime).sort((a, b) => new Date(b.exitTime) - new Date(a.exitTime));
+
+    const dateFilteredVehicles = allPaidVehicles.filter(dateFilters[state.reportsDateFilter]);
+
+    const finalFilteredVehicles = state.reportsPaymentFilter === 'todos'
+        ? dateFilteredVehicles
+        : dateFilteredVehicles.filter(v => v.paymentMethod === state.reportsPaymentFilter);
+
+    // --- Calculation Logic ---
+    const totalRevenue = dateFilteredVehicles
+        .filter(v => v.paymentMethod !== 'convenio')
+        .reduce((acc, v) => acc + (v.amountPaid || 0), 0);
+        
+    const totalFilteredRevenue = finalFilteredVehicles
+        .reduce((acc, v) => acc + (v.amountPaid || 0), 0);
+
+    // --- Rendering Logic ---
+
+    // Date filter buttons
+    const dateFilterButtons = [
+        { key: 'today', label: 'Hoje' },
+        { key: '7days', label: '7 Dias' },
+        { key: '15days', label: '15 Dias' },
+        { key: '30days', label: '30 Dias' },
+    ].map(f => `
+        <button 
+            data-action="set-report-date-filter" 
+            data-filter="${f.key}" 
+            class="${state.reportsDateFilter === f.key ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-700'} px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+            ${f.label}
+        </button>
+    `).join('');
+
+    // Payment method filter buttons
+    const paymentMethods = ['todos', 'pix', 'dinheiro', 'cartao', 'convenio'];
+    const paymentFilterButtons = paymentMethods.map(m => `
+        <button 
+            data-action="set-report-payment-filter" 
+            data-filter="${m}"
+            class="${state.reportsPaymentFilter === m ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-700'} flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize">
+            ${m === 'todos' ? 'Todos' : m}
+        </button>
+    `).join('');
+
+    // Payment method tag styles
+    const paymentTagStyles = {
+        pix: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
+        dinheiro: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+        cartao: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+        convenio: 'bg-slate-100 text-slate-800 dark:bg-slate-600 dark:text-slate-200',
+        default: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+    };
+    
+    // Vehicle list cards
+    const vehicleList = finalFilteredVehicles.length > 0 ? finalFilteredVehicles.map(v => {
+        const tagStyle = paymentTagStyles[v.paymentMethod] || paymentTagStyles.default;
+        return `
+        <div class="bg-slate-100 dark:bg-slate-900 p-4 rounded-lg space-y-3">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="font-mono text-xl font-bold">${v.plate}</p>
+                    <p class="text-sm text-slate-600 dark:text-slate-400">${v.brand || 'N/A'} - ${v.color || 'N/A'}</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-xl font-bold text-green-600 dark:text-green-400">${formatCurrency(v.amountPaid)}</p>
+                    <span class="text-xs font-semibold px-2 py-1 rounded-full capitalize ${tagStyle}">
+                        ${v.paymentMethod || 'Não Definido'}
+                    </span>
+                </div>
             </div>
-            <h3 class="text-xl font-bold mb-2">Histórico de Saídas</h3>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                    <thead class="bg-slate-100 dark:bg-slate-700 text-sm uppercase">
-                        <tr>
-                            <th class="p-3">Placa</th>
-                            <th class="p-3">Entrada</th>
-                            <th class="p-3">Saída</th>
-                            <th class="p-3">Pagamento</th>
-                            <th class="p-3 text-right">Valor Pago</th>
-                        </tr>
-                    </thead>
-                    <tbody>${vehicleList}</tbody>
-                </table>
+            <div class="flex justify-between items-center text-center text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-700 pt-2">
+                <div>
+                    <p class="font-semibold">ENTRADA</p>
+                    <p class="font-mono text-slate-800 dark:text-slate-200">${formatDate(v.entryTime)}</p>
+                </div>
+                <div>
+                    <p class="font-semibold">SAÍDA</p>
+                    <p class="font-mono text-slate-800 dark:text-slate-200">${formatDate(v.exitTime)}</p>
+                </div>
+                <div>
+                    <p class="font-semibold">PERMANÊNCIA</p>
+                    <p class="font-mono text-slate-800 dark:text-slate-200">${formatPermanence(v.entryTime, v.exitTime)}</p>
+                </div>
+            </div>
+        </div>
+    `}).join('') : '<p class="text-center text-slate-500 dark:text-slate-400 py-4">Nenhum registro encontrado para os filtros selecionados.</p>';
+
+    // Main return statement
+    return `
+        <div class="space-y-6">
+            <h2 class="text-2xl font-bold">Relatório - ${new Date().toLocaleDateString('pt-BR')}</h2>
+            
+            <div class="flex space-x-2">
+                ${dateFilterButtons}
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
+                <p class="text-sm text-slate-600 dark:text-slate-400">Total Arrecadado no Período</p>
+                <p class="text-4xl font-bold">${formatCurrency(totalRevenue)}</p>
+                <p class="text-xs text-slate-500 dark:text-slate-500">(exceto convênio)</p>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
+                <h3 class="text-xl font-bold mb-4">Saídas Registradas no Período</h3>
+                <div class="flex flex-nowrap gap-2 mb-4 overflow-x-auto hide-scrollbar pb-2">
+                    ${paymentFilterButtons}
+                </div>
+                <div class="border-t border-slate-200 dark:border-slate-700 pt-4">
+                    <p class="text-right font-semibold mb-4">
+                        Total (${state.reportsPaymentFilter === 'todos' ? 'Todos' : state.reportsPaymentFilter.charAt(0).toUpperCase() + state.reportsPaymentFilter.slice(1)}): 
+                        <span class="text-lg">${formatCurrency(totalFilteredRevenue)}</span>
+                    </p>
+                    <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                        ${vehicleList}
+                    </div>
+                </div>
             </div>
         </div>
     `;
@@ -306,12 +412,7 @@ const renderCheckoutSelectionPage = () => {
 
     const exitTime = new Date();
     const amount = calculateParkingFee(vehicle.entryTime, exitTime);
-    const entry = new Date(vehicle.entryTime);
-    const diffMs = exitTime - entry;
-    const diffMins = Math.floor(diffMs / 60000);
-    const hours = Math.floor(diffMins / 60);
-    const minutes = diffMins % 60;
-    const permanence = `${hours}h ${minutes}min`;
+    const permanence = formatPermanence(vehicle.entryTime, exitTime);
 
     state.paymentData = { vehicle, exitTime: exitTime.toISOString(), amount, permanence };
 
@@ -402,13 +503,15 @@ const renderStandardPaymentPage = (method) => {
 const renderSuccessPage = () => {
     const { vehicle, amount, exitTime, permanence, paymentMethod } = state.paymentData;
     return `
-        <div id="receipt-container" class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-md mx-auto text-center">
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-md mx-auto text-center">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-green-500 mx-auto mb-4" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
             </svg>
             <h2 class="text-2xl font-bold mb-2">Pagamento Aprovado!</h2>
             <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">Seu recibo está sendo preparado para impressão.</p>
-            <div class="text-left my-6 space-y-2 p-4 border-t border-b border-dashed border-slate-300 dark:border-slate-600">
+            
+            <!-- Div com o conteúdo para impressão -->
+            <div id="receipt-container" class="text-left my-6 space-y-2 p-4 border-t border-b border-dashed border-slate-300 dark:border-slate-600">
                  <h3 class="text-center font-bold text-lg mb-4">CUPOM NÃO FISCAL</h3>
                  <p><strong>Placa:</strong> <span class="font-mono float-right">${vehicle.plate}</span></p>
                  <p><strong>Entrada:</strong> <span class="font-mono float-right">${formatDate(vehicle.entryTime)}</span></p>
@@ -417,6 +520,7 @@ const renderSuccessPage = () => {
                  <p><strong>Pagamento:</strong> <span class="font-mono float-right capitalize">${paymentMethod}</span></p>
                  <p class="text-xl font-bold mt-4"><strong>TOTAL PAGO:</strong> <span class="font-mono float-right">${formatCurrency(amount)}</span></p>
             </div>
+            
             <button id="print-button" data-action="print-receipt" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-4 rounded-lg transition-colors mb-2">Imprimir Cupom</button>
             <button data-action="navigate" data-page="operational" class="w-full bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Voltar ao Pátio</button>
         </div>
@@ -437,7 +541,17 @@ const renderScannerModal = () => {
                         <div class="w-full h-1/3 border-4 border-dashed border-red-500 opacity-75"></div>
                     </div>
                 </div>
-                <p id="scanner-status" class="text-center mt-2 text-sm">Aponte a câmera para a placa...</p>
+                <div id="scanner-controls" class="text-center mt-4 space-y-2">
+                    <p id="scanner-status" class="text-sm h-5">Aponte a câmera para a placa e clique em escanear.</p>
+                    <div id="scanner-result-display" class="hidden font-mono text-lg my-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-md"></div>
+                    <div id="scanner-action-buttons">
+                        <button data-action="scan-plate" class="w-full bg-sky-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-sky-600 transition-colors">Escanear Placa</button>
+                    </div>
+                    <div id="scanner-confirmation-buttons" class="hidden space-x-2">
+                         <button data-action="accept-scan" class="w-1/2 bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition-colors">Aceitar</button>
+                         <button data-action="retry-scan" class="w-1/2 bg-yellow-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-yellow-600 transition-colors">Escanear Novamente</button>
+                    </div>
+                </div>
             </div>
         </div>
     `;
@@ -481,12 +595,64 @@ let renderApp = () => {
     }
     appEl.innerHTML = renderHeader() + content;
     
-    // After rendering, if it's the PIX page, initialize it
+    // After rendering, add specific listeners
     if (state.currentPage === 'checkout-pix') {
         initializePixScreen();
     }
+    if (state.currentPage === 'checkout-success') {
+        const printButton = document.getElementById('print-button');
+        if (printButton) {
+            printButton.onclick = () => window.print();
+        }
+    }
 };
 
+const scanPlate = async () => {
+    const video = document.getElementById('scanner-video');
+    const statusEl = document.getElementById('scanner-status');
+    const actionButtons = document.getElementById('scanner-action-buttons');
+    const confirmationButtons = document.getElementById('scanner-confirmation-buttons');
+    const resultDisplay = document.getElementById('scanner-result-display');
+
+    if (!videoStream) {
+        statusEl.textContent = 'Câmera não iniciada.';
+        return;
+    }
+
+    statusEl.textContent = 'Escaneando... Por favor, aguarde.';
+    actionButtons.classList.add('hidden');
+    statusEl.classList.remove('text-red-500', 'text-green-500');
+
+    try {
+        if (!scannerWorker) {
+             scannerWorker = await Tesseract.createWorker('por');
+        }
+
+        const { data: { text } } = await scannerWorker.recognize(video);
+        const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/;
+        const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const match = cleanedText.match(plateRegex);
+
+        if (match) {
+            const plate = match[0];
+            statusEl.textContent = 'Placa encontrada!';
+            statusEl.classList.add('text-green-500');
+            resultDisplay.textContent = plate;
+            resultDisplay.dataset.plate = plate;
+            resultDisplay.classList.remove('hidden');
+            confirmationButtons.classList.remove('hidden');
+        } else {
+            statusEl.textContent = 'Nenhuma placa encontrada. Tente novamente.';
+            statusEl.classList.add('text-red-500');
+            actionButtons.classList.remove('hidden');
+        }
+    } catch (err) {
+        console.error('OCR Error:', err);
+        statusEl.textContent = 'Erro durante o escaneamento. Tente novamente.';
+        statusEl.classList.add('text-red-500');
+        actionButtons.classList.remove('hidden');
+    }
+};
 
 // --- EVENT HANDLERS & ACTIONS ---
 const handleAppClick = (e) => {
@@ -497,6 +663,7 @@ const handleAppClick = (e) => {
     const page = target.dataset.page;
     const id = target.dataset.id;
     const method = target.dataset.method;
+    const filter = target.dataset.filter;
 
     switch (action) {
         case 'navigate':
@@ -551,9 +718,6 @@ const handleAppClick = (e) => {
                 finishPayment(method);
             }
             break;
-        case 'print-receipt':
-             window.print();
-             break;
         case 'copy-pix':
             const pixInput = document.getElementById('pix-copy-paste');
             if(pixInput && pixInput.value) {
@@ -571,6 +735,32 @@ const handleAppClick = (e) => {
         case 'close-modal':
             stopScanner();
             document.getElementById('modal-container').innerHTML = '';
+            break;
+        case 'scan-plate':
+            scanPlate();
+            break;
+        case 'accept-scan':
+            const resultEl = document.getElementById('scanner-result-display');
+            if (resultEl && resultEl.dataset.plate) {
+                document.getElementById('plate').value = resultEl.dataset.plate;
+            }
+            const closeModalButton = document.querySelector('[data-action="close-modal"]');
+            if (closeModalButton) handleAppClick({ target: closeModalButton });
+            break;
+        case 'retry-scan':
+            document.getElementById('scanner-status').textContent = 'Aponte a câmera para a placa e clique em escanear.';
+            document.getElementById('scanner-status').classList.remove('text-red-500', 'text-green-500');
+            document.getElementById('scanner-result-display').classList.add('hidden');
+            document.getElementById('scanner-action-buttons').classList.remove('hidden');
+            document.getElementById('scanner-confirmation-buttons').classList.add('hidden');
+            break;
+        case 'set-report-date-filter':
+            state.reportsDateFilter = filter;
+            renderApp();
+            break;
+        case 'set-report-payment-filter':
+            state.reportsPaymentFilter = filter;
+            renderApp();
             break;
     }
 };
@@ -609,11 +799,6 @@ const finishPayment = (paymentMethod) => {
         db.ref('vehicles').child(dbKey).update(vehicleUpdates).then(() => {
             state.currentPage = 'checkout-success';
             renderApp();
-            setTimeout(() => {
-                if(document.getElementById('print-button')) {
-                    window.print();
-                }
-            }, 500); 
         });
     }
 };
@@ -631,38 +816,6 @@ const startScanner = async () => {
         videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = videoStream;
         await video.play();
-        
-        scannerWorker = await Tesseract.createWorker('por');
-
-        const scan = async () => {
-            if (!videoStream || !scannerWorker) return;
-            try {
-                const { data: { text } } = await scannerWorker.recognize(video);
-                const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/;
-                const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-                const match = cleanedText.match(plateRegex);
-                
-                if (match) {
-                    const plate = match[0];
-                    document.getElementById('plate').value = plate;
-                    statusEl.textContent = `Placa encontrada: ${plate}`;
-                    statusEl.classList.add('text-green-500');
-                    setTimeout(() => {
-                        const closeModalButton = document.querySelector('[data-action="close-modal"]');
-                        if (closeModalButton) {
-                            handleAppClick({ target: closeModalButton });
-                        }
-                    }, 1000);
-                } else {
-                     requestAnimationFrame(scan);
-                }
-            } catch (err) {
-                console.error('OCR Error:', err);
-                if(videoStream) requestAnimationFrame(scan);
-            }
-        };
-        requestAnimationFrame(scan);
-
     } catch (err) {
         let message = 'Erro ao acessar a câmera.';
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
