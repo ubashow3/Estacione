@@ -1,5 +1,4 @@
-// Substitua pela sua chave de acesso REAL do Mercado Pago
-const MERCADO_PAGO_ACCESS_TOKEN = "APP_USR-1303198291178703-110315-e615fd29ec2257eaffd256a42300b713-1863716283"; 
+
 
 import { db } from './firebase.js';
 
@@ -12,13 +11,17 @@ let state = {
         fractionLimitMinutes: 15,
         pixKey: "seu-pix@email.com",
         pixHolderName: "NOME DO TITULAR",
-        pixHolderCity: "CIDADE"
+        pixHolderCity: "CIDADE",
+        mercadoPagoAccessToken: "APP_USR-1148763024143595-110318-262df78fa85a3ca2e717d0861555220b-1866080078",
+        useMercadoPago: false,
     },
     currentPage: 'operational', // operational, reports, admin, checkout-selection, checkout-pix, checkout-standard, checkout-success
     selectedVehicleId: null,
     paymentData: null,
     theme: localStorage.getItem('theme') || 'dark',
+    paymentPollingInterval: null,
 };
+
 
 // --- HELPERS ---
 const formatCurrency = (value) => value ? `R$ ${parseFloat(value).toFixed(2).replace('.', ',')}` : 'R$ 0,00';
@@ -43,6 +46,44 @@ const applyTheme = () => {
     localStorage.setItem('theme', state.theme);
 }
 
+// Helper para gerar o código do PIX (BRCode)
+const generateBRCode = (pixKey, holderName, city, amount, txid = '***') => {
+    const formatValue = (fieldId, value) => {
+        const length = value.length.toString().padStart(2, '0');
+        return `${fieldId}${length}${value}`;
+    };
+
+    const payload = [
+        formatValue('00', '01'), // Payload Format Indicator
+        formatValue('26', [
+            formatValue('00', 'br.gov.bcb.pix'), // GUI
+            formatValue('01', pixKey), // Chave PIX
+        ].join('')),
+        formatValue('52', '0000'), // Merchant Category Code
+        formatValue('53', '986'), // Transaction Currency (BRL)
+        formatValue('54', parseFloat(amount).toFixed(2)), // Transaction Amount
+        formatValue('58', 'BR'), // Country Code
+        formatValue('59', holderName.substring(0, 25)), // Merchant Name
+        formatValue('60', city.substring(0, 15)), // Merchant City
+        formatValue('62', formatValue('05', txid)), // Transaction ID
+    ].join('');
+
+    const crc16 = (payload) => {
+        let crc = 0xFFFF;
+        for (let i = 0; i < payload.length; i++) {
+            crc ^= payload.charCodeAt(i) << 8;
+            for (let j = 0; j < 8; j++) {
+                crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+            }
+        }
+        return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+    };
+
+    const finalPayload = `${payload}6304`;
+    return finalPayload + crc16(finalPayload);
+};
+
+
 // --- CORE LOGIC ---
 const calculateParkingFee = (entryTime, exitTime) => {
     const entry = new Date(entryTime);
@@ -63,6 +104,7 @@ const calculateParkingFee = (entryTime, exitTime) => {
 // --- RENDER FUNCTIONS ---
 const renderHeader = () => {
     const isDark = state.theme === 'dark';
+    
     return `
         <header class="flex flex-col items-center md:flex-row md:justify-between mb-6 space-y-4 md:space-y-0">
             <h1 class="text-3xl font-bold text-sky-500">Pare Aqui!!</h1>
@@ -179,11 +221,13 @@ const renderReportsPage = () => {
 const renderAdminPage = () => {
     const { settings } = state;
     return `
-        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
-            <h2 class="text-2xl font-bold mb-4">Configurações do Sistema</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Precificação</h3>
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg space-y-8">
+            <h2 class="text-2xl font-bold">Configurações do Sistema</h2>
+            
+            <!-- Precificação -->
+            <div>
+                <h3 class="text-lg font-semibold mb-2 border-b border-slate-300 dark:border-slate-600 pb-1">Precificação</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
                     <div class="space-y-4">
                         <div>
                             <label for="hourlyRate" class="block text-sm font-medium">Valor da Hora (R$)</label>
@@ -193,6 +237,8 @@ const renderAdminPage = () => {
                             <label for="toleranceMinutes" class="block text-sm font-medium">Minutos de Tolerância</label>
                             <input type="number" id="toleranceMinutes" data-setting="toleranceMinutes" value="${settings.toleranceMinutes}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
                         </div>
+                    </div>
+                    <div class="space-y-4">
                          <div>
                             <label for="fractionRate" class="block text-sm font-medium">Valor da Fração (R$)</label>
                             <input type="number" id="fractionRate" data-setting="fractionRate" value="${settings.fractionRate}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
@@ -203,8 +249,13 @@ const renderAdminPage = () => {
                         </div>
                     </div>
                 </div>
-                 <div>
-                    <h3 class="text-lg font-semibold mb-2">Configurações PIX</h3>
+            </div>
+
+            <!-- PIX Estático -->
+            <div>
+                <h3 class="text-lg font-semibold mb-2 border-b border-slate-300 dark:border-slate-600 pb-1">PIX Estático</h3>
+                 <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Usado para gerar o QR Code quando o PIX dinâmico está desativado.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div class="space-y-4">
                         <div>
                             <label for="pixKey" class="block text-sm font-medium">Chave PIX</label>
@@ -221,15 +272,36 @@ const renderAdminPage = () => {
                     </div>
                 </div>
             </div>
+
+             <!-- PIX Dinâmico -->
+            <div>
+                <h3 class="text-lg font-semibold mb-2 border-b border-slate-300 dark:border-slate-600 pb-1">PIX Dinâmico (Mercado Pago)</h3>
+                 <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Gera um QR Code único para cada transação e confirma o pagamento automaticamente.</p>
+                <div class="space-y-4">
+                     <div>
+                        <label for="mercadoPagoAccessToken" class="block text-sm font-medium">Access Token do Mercado Pago</label>
+                        <input type="password" id="mercadoPagoAccessToken" data-setting="mercadoPagoAccessToken" value="${settings.mercadoPagoAccessToken}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                    </div>
+                    <div class="flex items-center">
+                        <label for="useMercadoPago" class="block text-sm font-medium mr-4">Ativar PIX dinâmico</label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" id="useMercadoPago" data-setting="useMercadoPago" class="sr-only peer" ${settings.useMercadoPago ? 'checked' : ''}>
+                          <div class="w-11 h-6 bg-gray-200 dark:bg-gray-700 rounded-full peer peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
         </div>
     `;
 };
+
 
 const renderCheckoutSelectionPage = () => {
     const vehicle = state.vehicles.find(v => v.id === state.selectedVehicleId);
     if (!vehicle) {
         state.currentPage = 'operational';
-        return renderApp();
+        renderApp();
+        return;
     }
 
     const exitTime = new Date();
@@ -244,10 +316,10 @@ const renderCheckoutSelectionPage = () => {
     state.paymentData = { vehicle, exitTime: exitTime.toISOString(), amount, permanence };
 
     return `
-       <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto">
+       <div id="checkout-selection-page" class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto">
             <div class="flex justify-between items-start">
                 <h2 class="text-2xl font-bold mb-4">Registrar Saída</h2>
-                <button data-action="navigate" data-page="operational" class="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">&times;</button>
+                <button data-action="navigate" data-page="operational" class="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none">&times;</button>
             </div>
             <div class="mb-4 p-4 bg-slate-100 dark:bg-slate-700 rounded-lg">
                 <p><strong>Placa:</strong> ${vehicle.plate}</p>
@@ -256,30 +328,46 @@ const renderCheckoutSelectionPage = () => {
             </div>
             <h3 class="text-lg font-semibold mb-3">Selecione a Forma de Pagamento:</h3>
             <div class="grid grid-cols-2 gap-4">
-                <button data-action="select-payment-method" data-method="pix" class="p-4 bg-sky-500 text-white rounded-lg font-semibold text-center hover:bg-sky-600 transition-colors">PIX</button>
-                <button data-action="select-payment-method" data-method="dinheiro" class="p-4 bg-green-500 text-white rounded-lg font-semibold text-center hover:bg-green-600 transition-colors">Dinheiro</button>
-                <button data-action="select-payment-method" data-method="cartao" class="p-4 bg-orange-500 text-white rounded-lg font-semibold text-center hover:bg-orange-600 transition-colors">Cartão</button>
-                <button data-action="select-payment-method" data-method="convenio" class="p-4 bg-slate-500 text-white rounded-lg font-semibold text-center hover:bg-slate-600 transition-colors">Convênio</button>
+                 <button data-action="select-payment-method" data-method="pix" class="col-span-2 p-4 bg-cyan-500 text-white rounded-lg font-semibold text-center hover:bg-cyan-600 transition-colors flex items-center justify-center space-x-2 text-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                    <span>Pagar com PIX</span>
+                 </button>
+                 <button data-action="select-payment-method" data-method="dinheiro" class="p-4 bg-green-500 text-white rounded-lg font-semibold text-center hover:bg-green-600 transition-colors">Dinheiro</button>
+                 <button data-action="select-payment-method" data-method="cartao" class="p-4 bg-sky-500 text-white rounded-lg font-semibold text-center hover:bg-sky-600 transition-colors">Cartão</button>
+                 <button data-action="select-payment-method" data-method="convenio" class="col-span-2 p-4 bg-slate-500 text-white rounded-lg font-semibold text-center hover:bg-slate-600 transition-colors">Convênio</button>
             </div>
+            <div id="payment-error" class="text-red-500 text-sm mt-4 text-center"></div>
         </div>
     `;
 }
 
 const renderPixPaymentPage = () => {
-    const { vehicle, amount, permanence } = state.paymentData;
+    const { vehicle, amount } = state.paymentData;
+
     return `
-        <div id="pix-payment-page" class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto text-center">
-            <h2 class="text-2xl font-bold mb-2">Pagamento com PIX</h2>
-            <p class="mb-4">Total: <span class="font-bold text-lg">${formatCurrency(amount)}</span></p>
-            <div id="qrcode-container" class="flex justify-center my-4">
-                 <div class="loader"></div>
-                 <p class="mt-2">Gerando QR Code...</p>
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto text-center">
+            <h2 class="text-2xl font-bold mb-2">Pagamento via PIX</h2>
+            <div class="mb-4 p-4 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                <p><strong>Placa:</strong> ${vehicle.plate}</p>
+                <p class="text-2xl font-bold mt-2">Total a Pagar: ${formatCurrency(amount)}</p>
             </div>
-            <p id="pix-status" class="font-semibold text-lg text-yellow-500">Aguardando Pagamento...</p>
-            <p class="text-sm text-slate-500 mt-2">Escaneie o QR Code com o app do seu banco.</p>
-            <button data-action="cancel-payment" class="mt-6 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
-                Cancelar / Trocar Método
-            </button>
+            
+            <p id="pix-instruction" class="mb-4">Escaneie o QR Code com o app do seu banco:</p>
+
+            <div id="qrcode" class="flex justify-center items-center p-4 bg-white rounded-lg mb-4 w-64 h-64 mx-auto">
+                <!-- QR Code will be rendered here -->
+                <div class="loader"></div>
+            </div>
+
+            <p class="mb-2">Ou use o PIX Copia e Cola:</p>
+            <div class="flex mb-4">
+                <input type="text" id="pix-copy-paste" readonly class="w-full bg-slate-200 dark:bg-slate-700 rounded-l-md p-2 text-sm" placeholder="Aguardando código...">
+                <button data-action="copy-pix" class="bg-sky-500 text-white px-4 rounded-r-md hover:bg-sky-600">Copiar</button>
+            </div>
+            
+            <div id="pix-status-container" class="mt-6">
+                <!-- Status/Confirmation will be rendered here -->
+            </div>
         </div>
     `;
 };
@@ -288,7 +376,7 @@ const renderStandardPaymentPage = (method) => {
     const { vehicle, amount, permanence } = state.paymentData;
     const methodColors = {
         dinheiro: "bg-green-500 hover:bg-green-600",
-        cartao: "bg-orange-500 hover:bg-orange-600",
+        cartao: "bg-sky-500 hover:bg-sky-600",
         convenio: "bg-slate-500 hover:bg-slate-600"
     };
 
@@ -301,11 +389,11 @@ const renderStandardPaymentPage = (method) => {
                 <p class="text-2xl font-bold mt-2">Total a Pagar: ${formatCurrency(amount)}</p>
                 <p class="mt-2"><strong>Método:</strong> <span class="capitalize font-semibold">${method}</span></p>
             </div>
-             <button data-action="confirm-payment" data-method="${method}" class="w-full text-white font-bold py-3 px-4 rounded-lg transition-colors text-lg ${methodColors[method]}">
+             <button data-action="confirm-payment" data-method="${method}" class="w-full text-white font-bold py-3 px-4 rounded-lg transition-colors text-lg ${methodColors[method] || 'bg-gray-500'}">
                 Confirmar Saída e Registrar Pagamento
             </button>
             <button data-action="cancel-payment" class="mt-4 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
-                Trocar Método
+                Voltar
             </button>
         </div>
     `;
@@ -341,7 +429,7 @@ const renderScannerModal = () => {
             <div class="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-xl w-full max-w-lg">
                 <div class="flex justify-between items-center mb-2">
                     <h3 class="text-lg font-bold">Escanear Placa</h3>
-                    <button data-action="close-modal">&times;</button>
+                    <button data-action="close-modal" class="text-2xl leading-none">&times;</button>
                 </div>
                 <div class="relative w-full aspect-video bg-black rounded-md overflow-hidden">
                     <video id="scanner-video" class="w-full h-full" autoplay playsinline></video>
@@ -359,6 +447,11 @@ const renderScannerModal = () => {
 let renderApp = () => {
     const appEl = document.getElementById('app');
     if (!appEl) return;
+
+    if (state.paymentPollingInterval) {
+        clearInterval(state.paymentPollingInterval);
+        state.paymentPollingInterval = null;
+    }
 
     let content = '';
     switch (state.currentPage) {
@@ -387,11 +480,15 @@ let renderApp = () => {
             content = renderOperationalPage();
     }
     appEl.innerHTML = renderHeader() + content;
+    
+    // After rendering, if it's the PIX page, initialize it
+    if (state.currentPage === 'checkout-pix') {
+        initializePixScreen();
+    }
 };
 
 
 // --- EVENT HANDLERS & ACTIONS ---
-let pixPollingInterval = null;
 const handleAppClick = (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
@@ -440,15 +537,12 @@ const handleAppClick = (e) => {
             state.paymentData.paymentMethod = method;
             if (method === 'pix') {
                 state.currentPage = 'checkout-pix';
-                renderApp();
-                startPixPayment();
             } else {
                 state.currentPage = 'checkout-standard';
-                renderApp();
             }
+            renderApp();
             break;
         case 'cancel-payment':
-            clearInterval(pixPollingInterval);
             state.currentPage = 'checkout-selection';
             renderApp();
             break;
@@ -460,6 +554,15 @@ const handleAppClick = (e) => {
         case 'print-receipt':
              window.print();
              break;
+        case 'copy-pix':
+            const pixInput = document.getElementById('pix-copy-paste');
+            if(pixInput && pixInput.value) {
+                pixInput.select();
+                document.execCommand('copy');
+                target.textContent = 'Copiado!';
+                setTimeout(() => target.textContent = 'Copiar', 2000);
+            }
+            break;
         case 'open-scanner':
             e.preventDefault();
             document.getElementById('modal-container').innerHTML = renderScannerModal();
@@ -476,12 +579,23 @@ const handleSettingsChange = debounce((e) => {
     const target = e.target.closest('[data-setting]');
     if (target) {
         const key = target.dataset.setting;
-        const value = target.type === 'number' ? parseFloat(target.value) : target.value;
+        let value = target.value;
+        if (target.type === 'number') {
+            value = parseFloat(target.value);
+        } else if (target.type === 'checkbox') {
+            value = target.checked;
+        }
         db.ref('settings').child(key).set(value);
     }
-}, 500);
+}, 300);
 
 const finishPayment = (paymentMethod) => {
+    // Stop polling if it's running
+    if (state.paymentPollingInterval) {
+        clearInterval(state.paymentPollingInterval);
+        state.paymentPollingInterval = null;
+    }
+
     const { vehicle, exitTime, amount } = state.paymentData;
     const vehicleUpdates = {
         status: 'paid',
@@ -495,71 +609,12 @@ const finishPayment = (paymentMethod) => {
         db.ref('vehicles').child(dbKey).update(vehicleUpdates).then(() => {
             state.currentPage = 'checkout-success';
             renderApp();
-            // Aciona a impressão automaticamente após renderizar a tela de sucesso
             setTimeout(() => {
-                window.print();
+                if(document.getElementById('print-button')) {
+                    window.print();
+                }
             }, 500); 
         });
-    }
-};
-
-// --- MERCADO PAGO PIX ---
-const startPixPayment = async () => {
-    if (MERCADO_PAGO_ACCESS_TOKEN === "SEU_ACCESS_TOKEN_DO_MЕРСАDO_PAGO_AQUI") {
-        document.getElementById('qrcode-container').innerHTML = `<p class="text-red-500">Erro: Configure seu Access Token do Mercado Pago em index.js</p>`;
-        return;
-    }
-    const { vehicle, amount } = state.paymentData;
-    if (amount <= 0) {
-        finishPayment('pix'); // Free exit
-        return;
-    }
-
-    try {
-        const response = await fetch('https://api.mercadopago.com/v1/payments', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                transaction_amount: amount,
-                description: `Estacionamento Placa ${vehicle.plate}`,
-                payment_method_id: 'pix',
-                payer: {
-                    email: 'test_user_123456@testuser.com' // Required by Mercado Pago
-                }
-            })
-        });
-        const data = await response.json();
-        if (data.point_of_interaction) {
-            const qrCodeData = data.point_of_interaction.transaction_data.qr_code;
-            const qrCodeBase64 = data.point_of_interaction.transaction_data.qr_code_base64;
-            
-            const qrcodeContainer = document.getElementById('qrcode-container');
-            qrcodeContainer.innerHTML = `<img src="data:image/png;base64,${qrCodeBase64}" alt="PIX QR Code" class="mx-auto">`;
-
-            // Start polling for payment status
-            const paymentId = data.id;
-            pixPollingInterval = setInterval(async () => {
-                const statusResponse = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-                    headers: { 'Authorization': `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}` }
-                });
-                const statusData = await statusResponse.json();
-                if (statusData.status === 'approved') {
-                    clearInterval(pixPollingInterval);
-                    document.getElementById('pix-status').textContent = 'Pagamento Aprovado!';
-                    document.getElementById('pix-status').classList.remove('text-yellow-500');
-                    document.getElementById('pix-status').classList.add('text-green-500');
-                    setTimeout(() => finishPayment('pix'), 1000);
-                }
-            }, 3000);
-        } else {
-            throw new Error('Falha ao gerar PIX. Verifique a chave de acesso.');
-        }
-    } catch (error) {
-         document.getElementById('qrcode-container').innerHTML = `<p class="text-red-500 text-sm">${error.message}</p>`;
-         console.error(error);
     }
 };
 
@@ -577,23 +632,26 @@ const startScanner = async () => {
         video.srcObject = videoStream;
         await video.play();
         
-        scannerWorker = await Tesseract.createWorker('por', 1, {
-            logger: m => console.log(m) 
-        });
+        scannerWorker = await Tesseract.createWorker('por');
 
         const scan = async () => {
-            if (!videoStream) return;
+            if (!videoStream || !scannerWorker) return;
             try {
                 const { data: { text } } = await scannerWorker.recognize(video);
-                const plateRegex = /[A-Z]{3}-?[0-9][A-Z0-9][0-9]{2}/;
-                const match = text.toUpperCase().match(plateRegex);
+                const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/;
+                const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                const match = cleanedText.match(plateRegex);
+                
                 if (match) {
-                    const plate = match[0].replace('-', '');
+                    const plate = match[0];
                     document.getElementById('plate').value = plate;
                     statusEl.textContent = `Placa encontrada: ${plate}`;
                     statusEl.classList.add('text-green-500');
                     setTimeout(() => {
-                        handleAppClick({ target: document.querySelector('[data-action="close-modal"]') });
+                        const closeModalButton = document.querySelector('[data-action="close-modal"]');
+                        if (closeModalButton) {
+                            handleAppClick({ target: closeModalButton });
+                        }
                     }, 1000);
                 } else {
                      requestAnimationFrame(scan);
@@ -627,6 +685,153 @@ const stopScanner = async () => {
     }
 };
 
+// --- PIX Screen Logic ---
+const initializePixScreen = () => {
+    const { useMercadoPago, mercadoPagoAccessToken } = state.settings;
+
+    if (useMercadoPago && mercadoPagoAccessToken && mercadoPagoAccessToken.startsWith('APP_USR-')) {
+        createMercadoPagoPayment();
+    } else {
+        generateStaticPix();
+    }
+};
+
+const generateStaticPix = () => {
+    const { amount } = state.paymentData;
+    const { pixKey, pixHolderName, pixHolderCity } = state.settings;
+    const qrcodeContainer = document.getElementById('qrcode');
+    const pixInput = document.getElementById('pix-copy-paste');
+    const statusContainer = document.getElementById('pix-status-container');
+    
+    if (!pixKey || pixKey === "seu-pix@email.com" || !pixHolderName || !pixHolderCity) {
+        qrcodeContainer.innerHTML = '<p class="text-red-500 text-sm">Por favor, configure os dados do PIX Estático na tela de Configurações.</p>';
+        return;
+    }
+    
+    const brCode = generateBRCode(pixKey, pixHolderName, pixHolderCity, amount);
+    pixInput.value = brCode;
+
+    try {
+        const qr = qrcode(0, 'M');
+        qr.addData(brCode);
+        qr.make();
+        qrcodeContainer.innerHTML = qr.createImgTag(5, 10);
+    } catch (e) {
+        qrcodeContainer.innerHTML = '<p class="text-red-500 text-sm">Ocorreu um erro ao gerar o QR Code.</p>';
+    }
+
+    statusContainer.innerHTML = `
+        <p class="text-yellow-600 dark:text-yellow-400 font-semibold mb-4">Aguardando confirmação manual do pagamento.</p>
+        <button data-action="confirm-payment" data-method="pix" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition-colors text-lg">
+            Confirmar Saída e Registrar Pagamento
+        </button>
+        <button data-action="cancel-payment" class="mt-4 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
+            Voltar
+        </button>
+    `;
+};
+
+const createMercadoPagoPayment = async () => {
+    const qrcodeContainer = document.getElementById('qrcode');
+    const pixInput = document.getElementById('pix-copy-paste');
+    const statusContainer = document.getElementById('pix-status-container');
+    const pixInstruction = document.getElementById('pix-instruction');
+    const { amount } = state.paymentData;
+    const { mercadoPagoAccessToken } = state.settings;
+
+    const getExpirationDate = () => {
+        const date = new Date();
+        date.setMinutes(date.getMinutes() + 10); // 10 minutes expiration
+        const offset = -date.getTimezoneOffset();
+        const sign = offset >= 0 ? '+' : '-';
+        const pad = (num) => num.toString().padStart(2, '0');
+        const offsetHours = pad(Math.floor(Math.abs(offset) / 60));
+        const offsetMinutes = pad(Math.abs(offset) % 60);
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${(date.getMilliseconds()).toString().padStart(3, '0')}${sign}${offsetHours}:${offsetMinutes}`;
+    };
+
+    const paymentData = {
+        transaction_amount: amount,
+        description: `Pagamento Estacionamento - Placa ${state.paymentData.vehicle.plate}`,
+        payment_method_id: 'pix',
+        payer: {
+            email: `pagamento-placa-${state.paymentData.vehicle.plate.toLowerCase().replace(/[^a-z0-9]/g, '')}@parqueaqui.com`,
+            first_name: "Cliente",
+            last_name: "Estacionamento",
+        },
+        date_of_expiration: getExpirationDate(),
+    };
+
+    try {
+        const response = await fetch(`https://corsproxy.io/?${encodeURIComponent('https://api.mercadopago.com/v1/payments')}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${mercadoPagoAccessToken}`,
+                'X-Idempotency-Key': `${state.paymentData.vehicle.id}-${Date.now()}`
+            },
+            body: JSON.stringify(paymentData)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Erro desconhecido');
+        }
+
+        const qrCodeBase64 = data.point_of_interaction.transaction_data.qr_code_base64;
+        const qrCodeCopyPaste = data.point_of_interaction.transaction_data.qr_code;
+        
+        qrcodeContainer.innerHTML = `<img src="data:image/png;base64,${qrCodeBase64}" alt="QR Code PIX" class="w-full h-full object-contain">`;
+        pixInput.value = qrCodeCopyPaste;
+        pixInstruction.textContent = "PIX gerado! Escaneie o QR Code para pagar:";
+
+        statusContainer.innerHTML = `
+            <div class="flex items-center justify-center text-blue-600 dark:text-blue-400 font-semibold mb-4">
+                <div class="loader-small border-blue-500 mr-2"></div>
+                Aguardando pagamento...
+            </div>
+            <style>.loader-small { border: 3px solid #f3f3f3; border-top: 3px solid; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; }</style>
+            <button data-action="cancel-payment" class="mt-4 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
+                Cancelar e Voltar
+            </button>
+        `;
+
+        startPaymentPolling(data.id);
+
+    } catch (error) {
+        console.error('Erro ao criar pagamento no Mercado Pago:', error);
+        qrcodeContainer.innerHTML = `<p class="text-red-500 text-sm">Erro: ${error.message}. Verifique o Access Token nas configurações.</p>`;
+        statusContainer.innerHTML = `
+             <button data-action="cancel-payment" class="mt-4 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
+                Voltar
+            </button>
+        `;
+    }
+};
+
+const startPaymentPolling = (paymentId) => {
+    if (state.paymentPollingInterval) {
+        clearInterval(state.paymentPollingInterval);
+    }
+    state.paymentPollingInterval = setInterval(async () => {
+        try {
+            const response = await fetch(`https://corsproxy.io/?${encodeURIComponent(`https://api.mercadopago.com/v1/payments/${paymentId}`)}`, {
+                headers: { 'Authorization': `Bearer ${state.settings.mercadoPagoAccessToken}` }
+            });
+            const data = await response.json();
+            if (data.status === 'approved') {
+                finishPayment('pix');
+            }
+        } catch (error) {
+            console.error('Erro ao verificar status do pagamento:', error);
+            // Stop polling on network error to avoid spamming
+            clearInterval(state.paymentPollingInterval);
+            state.paymentPollingInterval = null;
+        }
+    }, 5000); // Check every 5 seconds
+};
+
 
 // --- INITIALIZATION ---
 const setupFirebaseListeners = () => {
@@ -634,10 +839,15 @@ const setupFirebaseListeners = () => {
         const data = snapshot.val();
         const vehiclesArray = data ? Object.keys(data).map(key => ({
             ...data[key],
-            __dbKey: key // Store the Firebase key
+            __dbKey: key
         })) : [];
         state.vehicles = vehiclesArray;
-        renderApp();
+        
+        // Avoid re-rendering on checkout/success pages to prevent interruption
+        const sensitivePages = ['checkout-selection', 'checkout-pix', 'checkout-standard', 'checkout-success'];
+        if (!sensitivePages.includes(state.currentPage)) {
+             renderApp();
+        }
     });
 
     db.ref('settings').on('value', (snapshot) => {
@@ -645,8 +855,9 @@ const setupFirebaseListeners = () => {
         if (data) {
             state.settings = { ...state.settings, ...data };
         }
-        // Don't re-render if we are on the admin page to avoid losing focus
-        if (state.currentPage !== 'admin') {
+         // Avoid re-rendering on checkout/success pages to prevent interruption
+        const sensitivePages = ['checkout-selection', 'checkout-pix', 'checkout-standard', 'checkout-success'];
+        if (!sensitivePages.includes(state.currentPage)) {
             renderApp();
         }
     });
