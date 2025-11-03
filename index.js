@@ -1,3 +1,4 @@
+
 import { db } from './firebase.js';
 
 // --- STATE MANAGEMENT ---
@@ -462,6 +463,8 @@ const handleSettingsChange = (e) => {
         ...settings,
         [name]: type === 'number' ? parseFloat(value) || 0 : value,
     };
+    // Atualiza o estado local para refletir na UI imediatamente, se necessário
+    settings = newSettings;
     db.ref('settings').set(newSettings);
 };
 
@@ -469,33 +472,24 @@ const calculateFee = (vehicle) => {
     const entry = new Date(vehicle.entryTime);
     const exit = new Date();
     const durationMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000);
+    const roundedDuration = Math.round(durationMinutes);
 
-    if (durationMinutes <= settings.toleranceMinutes) {
-        return { total: 0, durationMinutes: Math.round(durationMinutes), entry, exit, breakdown: 'Dentro da tolerância' };
+    if (roundedDuration <= settings.toleranceMinutes) {
+        return { total: 0, durationMinutes: roundedDuration, entry, exit, breakdown: 'Dentro da tolerância' };
     }
 
-    const chargeableMinutes = Math.max(1, durationMinutes);
-    const hours = Math.floor(chargeableMinutes / 60);
-    const remainingMinutes = chargeableMinutes % 60;
+    if (roundedDuration <= settings.fractionLimitMinutes) {
+        return { total: settings.fractionRate, durationMinutes: roundedDuration, entry, exit, breakdown: `Fração de ${settings.fractionLimitMinutes}m` };
+    }
     
-    let total = hours * settings.hourlyRate;
-    let breakdown = `${hours}h`;
+    // Se passar do limite da fração, cobra por hora cheia, arredondando para cima.
+    const hours = Math.ceil(roundedDuration / 60);
+    const total = hours * settings.hourlyRate;
+    const breakdown = `${hours}h (${hours > 1 ? 'horas' : 'hora'})`;
 
-    if (remainingMinutes > settings.fractionLimitMinutes) {
-        total += settings.hourlyRate;
-        breakdown += ` + 1h (fração > ${settings.fractionLimitMinutes}m)`;
-    } else if (remainingMinutes > 0) {
-        total += settings.fractionRate;
-        breakdown += ` + 1 Fração (<= ${settings.fractionLimitMinutes}m)`;
-    }
-
-    if (total < settings.hourlyRate) {
-        total = settings.hourlyRate; // Minimum charge is 1 hour
-        breakdown = `Valor mínimo de 1h`;
-    }
-
-    return { total, durationMinutes: Math.round(durationMinutes), entry, exit, breakdown };
+    return { total, durationMinutes: roundedDuration, entry, exit, breakdown };
 }
+
 
 const handleOpenExitModal = (vehicleId) => {
     const vehicle = vehicles.find(v => v.id === vehicleId);
@@ -514,6 +508,7 @@ const handleOpenExitModal = (vehicleId) => {
                 const method = e.target.dataset.method;
                 selectedMethod = method;
 
+                // Estilo do botão selecionado
                 document.querySelectorAll('.payment-method-btn').forEach(b => b.classList.remove('bg-blue-600', 'text-white', 'dark:bg-blue-500', 'border-blue-500'));
                 e.target.classList.add('bg-blue-600', 'text-white', 'dark:bg-blue-500', 'border-blue-500');
                 
@@ -545,7 +540,7 @@ const handleOpenExitModal = (vehicleId) => {
                     status: 'paid',
                     exitTime: new Date().toISOString(),
                     amountPaid: parseFloat(e.target.dataset.amount),
-                    paymentMethod: selectedMethod
+                    paymentMethod: calculation.total > 0 ? selectedMethod : 'tolerance'
                 };
             }
             return v;
@@ -662,14 +657,26 @@ const init = () => {
     navButtons.forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
     
     db.ref('vehicles').on('value', snapshot => {
-        vehicles = snapshot.val() || [];
+        const val = snapshot.val();
+        // Firebase retorna um objeto se as chaves forem numéricas, então convertemos para array
+        if (val && !Array.isArray(val)) {
+            vehicles = Object.values(val);
+        } else {
+            vehicles = val || [];
+        }
         if (currentView === 'operational') renderVehicleList();
         if (currentView === 'reports') renderReports();
     });
     db.ref('settings').on('value', snapshot => {
         settings = snapshot.val() || INITIAL_SETTINGS;
-        if (!snapshot.val()) db.ref('settings').set(INITIAL_SETTINGS);
-        if (currentView === 'admin') render();
+        if (!snapshot.val()) {
+          db.ref('settings').set(INITIAL_SETTINGS);
+        }
+        if (currentView === 'admin') {
+          // Re-renderiza a view admin para garantir que os valores nos inputs estejam atualizados
+          mainContent.innerHTML = adminViewTemplate();
+          document.getElementById('settings-form').addEventListener('input', handleSettingsChange);
+        }
     });
     switchView('operational');
 };
