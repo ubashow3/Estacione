@@ -19,9 +19,6 @@
     <!-- qrcode.js for PIX QR Code generation -->
     <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
     <style>
       /* Esconde a barra de rolagem para elementos com overflow */
       .no-scrollbar::-webkit-scrollbar {
@@ -58,6 +55,14 @@
         <!-- Views will be dynamically inserted here -->
       </main>
     </div>
+
+    <!-- Modal Container -->
+    <div id="modal-container" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
+        <!-- Modal content will be injected here -->
+    </div>
+    
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-compat.js"></script>
 
     <!-- Application Logic -->
     <script type="module" src="./index.js"></script>

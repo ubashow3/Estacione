@@ -5,10 +5,14 @@ let vehicles = [];
 let settings = {};
 let currentView = 'operational';
 let selectedVehicleId = null;
+let isScannerOpen = false;
 let TESSERACT_WORKER = null;
+let videoStream = null;
+
 
 // --- DOM ELEMENTS ---
 const mainContent = document.getElementById('main-content');
+const modalContainer = document.getElementById('modal-container');
 const themeToggle = document.getElementById('theme-toggle');
 const themeIconMoon = document.getElementById('theme-icon-moon');
 const themeIconSun = document.getElementById('theme-icon-sun');
@@ -72,9 +76,9 @@ const operationalViewTemplate = () => `
   </div>`;
 
 const vehicleListItemTemplate = (v) => `
-  <div class="bg-white dark:bg-slate-800 p-3 rounded-lg shadow flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
+  <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg shadow-sm border dark:border-slate-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
     <div class="flex items-center gap-3 flex-1 min-w-[150px]">
-      <div class="flex-shrink-0 w-1.5 h-10 bg-blue-500 dark:bg-slate-500 rounded-full"></div>
+      <div class="flex-shrink-0 w-1.5 h-10 bg-blue-500 dark:bg-slate-600 rounded-full"></div>
       <div>
         <p class="font-mono text-lg font-bold text-slate-800 dark:text-slate-100">${v.plate}</p>
         <p class="text-xs text-slate-500 dark:text-slate-400">${v.brand} - ${v.color}</p>
@@ -98,11 +102,11 @@ const adminViewTemplate = () => `
           <h3 class="font-semibold text-slate-700 dark:text-slate-200">Precificação</h3>
           <div>
             <label for="hourlyRate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Valor da Hora (R$)</label>
-            <input type="number" name="hourlyRate" id="hourlyRate" value="${settings.hourlyRate}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
+            <input type="number" step="0.01" name="hourlyRate" id="hourlyRate" value="${settings.hourlyRate}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
           </div>
           <div>
             <label for="fractionRate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Valor da Fração (R$)</label>
-            <input type="number" name="fractionRate" id="fractionRate" value="${settings.fractionRate}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
+            <input type="number" step="0.01" name="fractionRate" id="fractionRate" value="${settings.fractionRate}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
           </div>
         </div>
         <div class="space-y-4 p-4 border dark:border-slate-700 rounded-lg">
@@ -138,24 +142,19 @@ const adminViewTemplate = () => `
   
 const reportsViewTemplate = (reportData) => {
     const { title, totalRevenue, vehiclesToDisplay, displayedTotal, paymentMethodFilter, activeFilter } = reportData;
-    const paymentMethodLabels = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão', convenio: 'Convênio', all: 'Todos' };
+    const paymentMethodLabels = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão', convenio: 'Convênio' };
     const compactDateTime = (isoString) => {
         if (!isoString) return '...';
         return new Date(isoString).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
     };
 
     const periodFilters = [
-        { period: 'today', label: 'Hoje' },
-        { period: '7days', label: '7 Dias' },
-        { period: '15days', label: '15 Dias' },
-        { period: '30days', label: '30 Dias' },
+        { period: 'today', label: 'Hoje' }, { period: '7days', label: '7 Dias' },
+        { period: '15days', label: '15 Dias' }, { period: '30days', label: '30 Dias' },
     ];
     const paymentFilters = [
-        { method: 'all', label: 'Todos' },
-        { method: 'pix', label: 'PIX' },
-        { method: 'cash', label: 'Dinheiro' },
-        { method: 'card', label: 'Cartão' },
-        { method: 'convenio', label: 'Convênio' },
+        { method: 'all', label: 'Todos' }, { method: 'pix', label: 'PIX' }, { method: 'cash', label: 'Dinheiro' },
+        { method: 'card', label: 'Cartão' }, { method: 'convenio', label: 'Convênio' },
     ];
 
     return `
@@ -187,7 +186,7 @@ const reportsViewTemplate = (reportData) => {
             `).join('')}
           </div>
           <div class="text-right border-t dark:border-slate-700 pt-2">
-              <span class="text-sm font-medium text-slate-600 dark:text-slate-400">Total (${paymentMethodLabels[paymentMethodFilter]}): </span>
+              <span class="text-sm font-medium text-slate-600 dark:text-slate-400">Total (${paymentMethodFilter === 'all' ? 'Todos' : paymentMethodLabels[paymentMethodFilter]}): </span>
               <span class="text-lg font-bold text-slate-800 dark:text-slate-100">R$ ${displayedTotal.toFixed(2).replace('.', ',')}</span>
           </div>
         </div>
@@ -236,6 +235,80 @@ const reportsViewTemplate = (reportData) => {
     </div>`;
 };
 
+const exitModalTemplate = (vehicle, calculation) => {
+    const { total, durationMinutes, entry, exit, breakdown } = calculation;
+    const durationHours = Math.floor(durationMinutes / 60);
+    const durationMins = durationMinutes % 60;
+    
+    return `
+    <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-lg w-full p-6 space-y-6">
+        <div class="flex justify-between items-start">
+            <div>
+                <h2 class="text-2xl font-bold text-slate-800 dark:text-slate-100">Registrar Saída</h2>
+                <p class="font-mono text-lg font-bold text-slate-600 dark:text-slate-300">${vehicle.plate}</p>
+            </div>
+            <button id="close-modal-btn" class="p-1 rounded-full text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-700">&times;</button>
+        </div>
+
+        <div class="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-lg grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
+            <div>
+                <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Entrada</p>
+                <p class="font-semibold text-slate-700 dark:text-slate-200">${entry.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</p>
+            </div>
+            <div>
+                <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Saída</p>
+                <p class="font-semibold text-slate-700 dark:text-slate-200">${exit.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</p>
+            </div>
+            <div class="col-span-2 sm:col-span-1">
+                <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Permanência</p>
+                <p class="font-semibold text-slate-700 dark:text-slate-200">${durationHours}h ${durationMins}m</p>
+            </div>
+        </div>
+
+        <div class="text-center">
+            <p class="text-sm font-medium text-slate-500 dark:text-slate-400">Total a Pagar</p>
+            <p class="text-5xl font-bold text-slate-800 dark:text-slate-100">R$ ${total.toFixed(2).replace('.', ',')}</p>
+            <p class="text-xs text-slate-400">${breakdown}</p>
+        </div>
+
+        <div id="payment-area" class="${total <= 0 ? 'hidden' : ''}">
+            <p class="text-center font-semibold text-slate-700 dark:text-slate-300 mb-3">Forma de Pagamento</p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+                <button data-method="pix" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">PIX</button>
+                <button data-method="cash" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Dinheiro</button>
+                <button data-method="card" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Cartão</button>
+                <button data-method="convenio" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Convênio</button>
+            </div>
+            <div id="pix-qr-code-container" class="hidden flex flex-col items-center justify-center p-4 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                <p class="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">Escaneie para pagar com PIX</p>
+                <div id="pix-qr-code" class="bg-white p-2 rounded-md"></div>
+            </div>
+        </div>
+
+        <button id="confirm-exit-btn" data-vehicle-id="${vehicle.id}" data-amount="${total}" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed" ${total > 0 ? 'disabled' : ''}>
+          ${total > 0 ? 'Selecione o Pagamento' : 'Confirmar Saída (Tolerância)'}
+        </button>
+    </div>
+    `;
+};
+
+const scannerModalTemplate = () => `
+  <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-lg w-full p-4 space-y-4">
+    <div class="flex justify-between items-center">
+      <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100">Escanear Placa</h2>
+      <button id="close-modal-btn" class="p-1 rounded-full text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-700">&times;</button>
+    </div>
+    <div class="bg-black rounded-md overflow-hidden relative">
+      <video id="scanner-video" class="w-full" playsinline></video>
+      <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="w-full h-1/3 border-4 border-dashed border-white/50 rounded-lg"></div>
+      </div>
+    </div>
+    <p id="scanner-status" class="text-center text-sm text-slate-500 dark:text-slate-400 h-5">Aponte a câmera para a placa do veículo.</p>
+    <button id="capture-plate-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500">Capturar e Ler Placa</button>
+  </div>
+`;
+
 // --- THEME ---
 const applyTheme = (theme) => {
     localStorage.setItem('theme', theme);
@@ -249,10 +322,26 @@ const applyTheme = (theme) => {
         themeIconSun.classList.add('hidden');
     }
 };
-
 const toggleTheme = () => {
     const currentTheme = localStorage.getItem('theme') || 'light';
     applyTheme(currentTheme === 'light' ? 'dark' : 'light');
+};
+
+// --- MODAL & OVERLAY ---
+const showModal = (content) => {
+    modalContainer.innerHTML = content;
+    modalContainer.classList.remove('hidden');
+    document.getElementById('close-modal-btn')?.addEventListener('click', hideModal);
+};
+const hideModal = () => {
+    modalContainer.innerHTML = '';
+    modalContainer.classList.add('hidden');
+    selectedVehicleId = null;
+    isScannerOpen = false;
+    if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
+        videoStream = null;
+    }
 };
 
 // --- RENDER FUNCTIONS ---
@@ -274,25 +363,20 @@ const renderVehicleList = () => {
         container.innerHTML = filtered.slice().reverse().map(vehicleListItemTemplate).join('');
     }
     
-    // Add event listeners after rendering
     document.querySelectorAll('.register-exit-btn').forEach(button => {
-        button.addEventListener('click', (e) => {
-            selectedVehicleId = e.currentTarget.dataset.id;
-            render();
-        });
+        button.addEventListener('click', (e) => handleOpenExitModal(e.currentTarget.dataset.id));
     });
 };
 
 const renderReports = () => {
     const activeFilter = mainContent.dataset.activeFilter || 'today';
     const paymentMethodFilter = mainContent.dataset.paymentMethodFilter || 'all';
-
     const now = new Date();
     const startDate = new Date();
     let title = 'Relatório do Dia';
 
     switch (activeFilter) {
-      case 'today': startDate.setHours(0, 0, 0, 0); title = `Relatório do Dia - ${now.toLocaleDateString('pt-BR')}`; break;
+      case 'today': startDate.setHours(0, 0, 0, 0); title = `Relatório - ${now.toLocaleDateString('pt-BR')}`; break;
       case '7days': startDate.setDate(now.getDate() - 7); startDate.setHours(0, 0, 0, 0); title = 'Relatório - Últimos 7 Dias'; break;
       case '15days': startDate.setDate(now.getDate() - 15); startDate.setHours(0, 0, 0, 0); title = 'Relatório - Últimos 15 Dias'; break;
       case '30days': startDate.setDate(now.getDate() - 30); startDate.setHours(0, 0, 0, 0); title = 'Relatório - Últimos 30 Dias'; break;
@@ -300,17 +384,15 @@ const renderReports = () => {
 
     const periodVehicles = vehicles.filter(v => v.status === 'paid' && v.exitTime && new Date(v.exitTime) >= startDate);
     const totalRevenue = periodVehicles.reduce((acc, v) => acc + (v.amountPaid || 0), 0);
-    
     const vehiclesToDisplay = paymentMethodFilter === 'all' ? periodVehicles : periodVehicles.filter(v => v.paymentMethod === paymentMethodFilter);
     const displayedTotal = vehiclesToDisplay.reduce((acc, v) => acc + (v.amountPaid || 0), 0);
 
     const reportData = { title, totalRevenue, vehiclesToDisplay, displayedTotal, paymentMethodFilter, activeFilter };
     mainContent.innerHTML = reportsViewTemplate(reportData);
 
-    // Add event listeners
     document.querySelectorAll('.period-filter-btn').forEach(btn => btn.addEventListener('click', e => {
         mainContent.dataset.activeFilter = e.currentTarget.dataset.period;
-        mainContent.dataset.paymentMethodFilter = 'all'; // Reset payment filter
+        mainContent.dataset.paymentMethodFilter = 'all';
         renderReports();
     }));
     document.querySelectorAll('.payment-filter-btn').forEach(btn => btn.addEventListener('click', e => {
@@ -320,37 +402,26 @@ const renderReports = () => {
 };
 
 const render = () => {
-    if (selectedVehicleId) {
-        // Render Exit Page
-        const vehicle = vehicles.find(v => v.id === selectedVehicleId);
-        // For simplicity, we'll build the exit logic directly inside the main render function
-        // A more complex app would use a dedicated function like renderExitPage(vehicle)
-        mainContent.innerHTML = 'EXIT PAGE FOR ' + vehicle.plate; // Placeholder
-        return;
-    }
-    
+    hideModal(); // Ensure modals are closed on view change
     switch (currentView) {
         case 'operational':
             mainContent.innerHTML = operationalViewTemplate();
             renderVehicleList();
-            // Add event listeners for the operational view
             document.getElementById('add-vehicle-form').addEventListener('submit', handleAddVehicle);
             document.getElementById('search-plate').addEventListener('input', renderVehicleList);
-            document.getElementById('open-scanner-btn').addEventListener('click', () => alert('Scanner a ser implementado'));
+            document.getElementById('open-scanner-btn').addEventListener('click', handleOpenScanner);
             break;
         case 'reports':
             renderReports();
             break;
         case 'admin':
             mainContent.innerHTML = adminViewTemplate();
-            // Add event listeners for admin view
             document.getElementById('settings-form').addEventListener('input', handleSettingsChange);
             break;
     }
 };
 
-// --- EVENT HANDLERS & LOGIC ---
-
+// --- LOGIC & EVENT HANDLERS ---
 function uuidv4() {
   return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
     (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
@@ -360,8 +431,17 @@ function uuidv4() {
 const handleAddVehicle = (e) => {
     e.preventDefault();
     const form = e.target;
-    const plate = form.plate.value.toUpperCase();
-    if (!plate) return;
+    const plateInput = form.plate;
+    const plate = plateInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+    if (!plate) {
+        alert("A placa é obrigatória.");
+        return;
+    }
+    if (vehicles.some(v => v.plate === plate && v.status === 'parked')) {
+        alert("Este veículo já está no pátio.");
+        return;
+    }
 
     const newVehicle = {
       plate,
@@ -373,6 +453,7 @@ const handleAddVehicle = (e) => {
     };
     db.ref('vehicles').set([...vehicles, newVehicle]);
     form.reset();
+    plateInput.focus();
 };
 
 const handleSettingsChange = (e) => {
@@ -384,13 +465,190 @@ const handleSettingsChange = (e) => {
     db.ref('settings').set(newSettings);
 };
 
+const calculateFee = (vehicle) => {
+    const entry = new Date(vehicle.entryTime);
+    const exit = new Date();
+    const durationMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000);
+
+    if (durationMinutes <= settings.toleranceMinutes) {
+        return { total: 0, durationMinutes: Math.round(durationMinutes), entry, exit, breakdown: 'Dentro da tolerância' };
+    }
+
+    const chargeableMinutes = Math.max(1, durationMinutes);
+    const hours = Math.floor(chargeableMinutes / 60);
+    const remainingMinutes = chargeableMinutes % 60;
+    
+    let total = hours * settings.hourlyRate;
+    let breakdown = `${hours}h`;
+
+    if (remainingMinutes > settings.fractionLimitMinutes) {
+        total += settings.hourlyRate;
+        breakdown += ` + 1h (fração > ${settings.fractionLimitMinutes}m)`;
+    } else if (remainingMinutes > 0) {
+        total += settings.fractionRate;
+        breakdown += ` + 1 Fração (<= ${settings.fractionLimitMinutes}m)`;
+    }
+
+    if (total < settings.hourlyRate) {
+        total = settings.hourlyRate; // Minimum charge is 1 hour
+        breakdown = `Valor mínimo de 1h`;
+    }
+
+    return { total, durationMinutes: Math.round(durationMinutes), entry, exit, breakdown };
+}
+
+const handleOpenExitModal = (vehicleId) => {
+    const vehicle = vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return;
+    
+    selectedVehicleId = vehicleId;
+    const calculation = calculateFee(vehicle);
+    showModal(exitModalTemplate(vehicle, calculation));
+
+    const confirmBtn = document.getElementById('confirm-exit-btn');
+    let selectedMethod = null;
+
+    if (calculation.total > 0) {
+        document.querySelectorAll('.payment-method-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const method = e.target.dataset.method;
+                selectedMethod = method;
+
+                document.querySelectorAll('.payment-method-btn').forEach(b => b.classList.remove('bg-blue-600', 'text-white', 'dark:bg-blue-500', 'border-blue-500'));
+                e.target.classList.add('bg-blue-600', 'text-white', 'dark:bg-blue-500', 'border-blue-500');
+                
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Confirmar Saída';
+
+                const pixContainer = document.getElementById('pix-qr-code-container');
+                if (method === 'pix') {
+                    const qrCodeEl = document.getElementById('pix-qr-code');
+                    qrCodeEl.innerHTML = '';
+                    new QRCode(qrCodeEl, {
+                        text: generatePixPayload(calculation.total),
+                        width: 150,
+                        height: 150,
+                    });
+                    pixContainer.classList.remove('hidden');
+                } else {
+                    pixContainer.classList.add('hidden');
+                }
+            });
+        });
+    }
+
+    confirmBtn.addEventListener('click', (e) => {
+        const updatedVehicles = vehicles.map(v => {
+            if (v.id === e.target.dataset.vehicleId) {
+                return {
+                    ...v,
+                    status: 'paid',
+                    exitTime: new Date().toISOString(),
+                    amountPaid: parseFloat(e.target.dataset.amount),
+                    paymentMethod: selectedMethod
+                };
+            }
+            return v;
+        });
+        db.ref('vehicles').set(updatedVehicles);
+        hideModal();
+    });
+};
+
+const generatePixPayload = (amount) => {
+    const format = (id, value) => {
+        const len = value.length.toString().padStart(2, '0');
+        return `${id}${len}${value}`;
+    };
+    const key = settings.pixKey || '';
+    const name = (settings.pixHolderName || 'NOME').substring(0, 25);
+    const city = (settings.pixHolderCity || 'CIDADE').substring(0, 15);
+    const amountStr = amount.toFixed(2);
+    
+    let payload = '';
+    payload += format('00', '01');
+    payload += format('26', format('00', 'br.gov.bcb.pix') + format('01', key));
+    payload += format('52', '0000');
+    payload += format('53', '986');
+    payload += format('54', amountStr);
+    payload += format('58', 'BR');
+    payload += format('59', name);
+    payload += format('60', city);
+    payload += format('62', format('05', '***'));
+    payload += '6304'; // CRC16 placeholder start
+
+    // Basic CRC16 calculation
+    let crc = 0xFFFF;
+    for (let i = 0; i < payload.length; i++) {
+        crc ^= payload.charCodeAt(i) << 8;
+        for (let j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+        }
+    }
+    const crc16 = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+    return payload + crc16;
+};
+
+const handleOpenScanner = async () => {
+    isScannerOpen = true;
+    showModal(scannerModalTemplate());
+    const video = document.getElementById('scanner-video');
+    const statusEl = document.getElementById('scanner-status');
+
+    try {
+        videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = videoStream;
+        video.play();
+        document.getElementById('capture-plate-btn').addEventListener('click', () => recognizePlate(video, statusEl));
+    } catch (err) {
+        console.error("Error accessing camera: ", err);
+        statusEl.textContent = 'Erro ao acessar a câmera.';
+        statusEl.classList.add('text-red-500');
+    }
+};
+
+const recognizePlate = async (video, statusEl) => {
+    if (!TESSERACT_WORKER) {
+        statusEl.textContent = 'Inicializando leitor...';
+        TESSERACT_WORKER = await Tesseract.createWorker('eng', 1, {
+            logger: m => console.log(m)
+        });
+        await TESSERACT_WORKER.setParameters({
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+        });
+    }
+    
+    statusEl.textContent = 'Lendo placa...';
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const { data: { text } } = await TESSERACT_WORKER.recognize(canvas);
+    const cleanedText = text.replace(/[^A-Z0-9]/g, '');
+    
+    // Basic validation for Mercosul (LLLNLNN) or traditional (LLLNNNN) plates
+    const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}/;
+    const match = cleanedText.match(plateRegex);
+
+    if (match) {
+        const foundPlate = match[0];
+        document.getElementById('plate').value = foundPlate;
+        statusEl.textContent = `Placa encontrada: ${foundPlate}`;
+        hideModal();
+    } else {
+        statusEl.textContent = 'Nenhuma placa válida encontrada. Tente novamente.';
+    }
+};
+
 const switchView = (view) => {
     currentView = view;
     navButtons.forEach(button => {
+        const baseClasses = 'nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors';
         if (button.dataset.view === view) {
-            button.className = 'nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors bg-blue-600 text-white shadow dark:bg-slate-600';
+            button.className = `${baseClasses} bg-blue-600 text-white shadow dark:bg-slate-600`;
         } else {
-            button.className = 'nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors bg-white text-slate-600 hover:bg-slate-100 dark:bg-transparent dark:text-slate-300 dark:hover:bg-slate-600';
+            button.className = `${baseClasses} bg-white text-slate-600 hover:bg-slate-100 dark:bg-transparent dark:text-slate-300 dark:hover:bg-slate-600`;
         }
     });
     render();
@@ -398,34 +656,21 @@ const switchView = (view) => {
 
 // --- INITIALIZATION ---
 const init = () => {
-    // Theme setup
     const savedTheme = localStorage.getItem('theme') || 'light';
     applyTheme(savedTheme);
     themeToggle.addEventListener('click', toggleTheme);
-
-    // Nav setup
-    navButtons.forEach(button => {
-        button.addEventListener('click', () => switchView(button.dataset.view));
-    });
+    navButtons.forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
     
-    // Firebase Listeners
     db.ref('vehicles').on('value', snapshot => {
         vehicles = snapshot.val() || [];
         if (currentView === 'operational') renderVehicleList();
         if (currentView === 'reports') renderReports();
     });
-
     db.ref('settings').on('value', snapshot => {
         settings = snapshot.val() || INITIAL_SETTINGS;
-        if (!snapshot.val()) {
-            db.ref('settings').set(INITIAL_SETTINGS);
-        }
+        if (!snapshot.val()) db.ref('settings').set(INITIAL_SETTINGS);
         if (currentView === 'admin') render();
     });
-
-    // Initial Render
     switchView('operational');
 };
-
-// Start the app
 init();
