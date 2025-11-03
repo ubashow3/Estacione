@@ -1,5 +1,5 @@
 // Substitua pela sua chave de acesso REAL do Mercado Pago
-const MERCADO_PAGO_ACCESS_TOKEN = "SEU_ACCESS_TOKEN_DO_MЕРСАDO_PAGO_AQUI"; 
+const MERCADO_PAGO_ACCESS_TOKEN = "APP_USR-1303198291178703-110315-e615fd29ec2257eaffd256a42300b713-1863716283"; 
 
 import { db } from './firebase.js';
 
