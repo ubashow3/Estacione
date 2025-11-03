@@ -1,683 +1,663 @@
+// Substitua pela sua chave de acesso REAL do Mercado Pago
+const MERCADO_PAGO_ACCESS_TOKEN = "SEU_ACCESS_TOKEN_DO_MЕРСАDO_PAGO_AQUI"; 
 
 import { db } from './firebase.js';
 
-// --- STATE MANAGEMENT ---
-let vehicles = [];
-let settings = {};
-let currentView = 'operational';
-let selectedVehicleId = null;
-let isScannerOpen = false;
-let TESSERACT_WORKER = null;
-let videoStream = null;
-
-
-// --- DOM ELEMENTS ---
-const mainContent = document.getElementById('main-content');
-const modalContainer = document.getElementById('modal-container');
-const themeToggle = document.getElementById('theme-toggle');
-const themeIconMoon = document.getElementById('theme-icon-moon');
-const themeIconSun = document.getElementById('theme-icon-sun');
-const navButtons = document.querySelectorAll('.nav-button');
-const htmlEl = document.documentElement;
-
-// --- CONSTANTS ---
-const INITIAL_SETTINGS = {
-  hourlyRate: 10,
-  toleranceMinutes: 5,
-  fractionRate: 5,
-  fractionLimitMinutes: 15,
-  pixKey: 'seu-pix@email.com',
-  pixHolderName: 'NOME DO TITULAR',
-  pixHolderCity: 'CIDADE',
+let state = {
+    vehicles: [],
+    settings: {
+        hourlyRate: 10,
+        toleranceMinutes: 5,
+        fractionRate: 5,
+        fractionLimitMinutes: 15,
+        pixKey: "seu-pix@email.com",
+        pixHolderName: "NOME DO TITULAR",
+        pixHolderCity: "CIDADE"
+    },
+    currentPage: 'operational', // operational, reports, admin, checkout-selection, checkout-pix, checkout-standard, checkout-success
+    selectedVehicleId: null,
+    paymentData: null,
+    theme: localStorage.getItem('theme') || 'dark',
 };
-const CAR_BRANDS = ["Outra", "VW", "Fiat", "Chevrolet", "Hyundai", "Ford", "Toyota", "Honda", "Jeep", "Renault"];
-const CAR_COLORS = ["Outra", "Prata", "Preto", "Branco", "Cinza", "Vermelho", "Azul", "Marrom"];
 
-// --- TEMPLATES (HTML as strings) ---
-const operationalViewTemplate = () => `
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-    <div class="lg:col-span-1">
-      <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md">
-        <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-4">Registrar Entrada</h2>
-        <form id="add-vehicle-form" class="space-y-4">
-          <div class="relative">
-            <label for="plate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Placa do Veículo</label>
-            <input type="text" id="plate" name="plate" class="mt-1 block w-full px-3 py-2 pr-12 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400 dark:focus:ring-slate-500 dark:focus:border-slate-500" placeholder="AAA-1234" required>
-            <button type="button" id="open-scanner-btn" class="absolute inset-y-0 right-0 top-6 flex items-center px-3 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-slate-300" aria-label="Escanear placa">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-6 w-6"><path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.776 48.776 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z"></path></svg>
-            </button>
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label for="brand" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Marca</label>
-              <select id="brand" name="brand" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-                ${CAR_BRANDS.map(m => `<option value="${m}">${m}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label for="color" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Cor</label>
-              <select id="color" name="color" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-                ${CAR_COLORS.map(c => `<option value="${c}">${c}</option>`).join('')}
-              </select>
-            </div>
-          </div>
-          <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500">Registrar Entrada</button>
-        </form>
-      </div>
-    </div>
-    <div class="lg:col-span-2">
-      <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md">
-        <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4">
-          <h2 id="patio-title" class="text-xl font-bold text-slate-800 dark:text-slate-100">Veículos no Pátio (0)</h2>
-          <input type="text" id="search-plate" placeholder="Buscar placa..." class="w-full sm:w-auto px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400 dark:focus:ring-slate-500 dark:focus:border-slate-500">
-        </div>
-        <div id="vehicle-list-container" class="space-y-3"></div>
-      </div>
-    </div>
-  </div>`;
-
-const vehicleListItemTemplate = (v) => `
-  <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg shadow-sm border dark:border-slate-700 flex flex-wrap justify-between items-center gap-x-4 gap-y-2">
-    <div class="flex items-center gap-3 flex-1 min-w-[150px]">
-      <div class="flex-shrink-0 w-1.5 h-10 bg-blue-500 dark:bg-slate-600 rounded-full"></div>
-      <div>
-        <p class="font-mono text-lg font-bold text-slate-800 dark:text-slate-100">${v.plate}</p>
-        <p class="text-xs text-slate-500 dark:text-slate-400">${v.brand} - ${v.color}</p>
-      </div>
-    </div>
-    <div class="text-sm text-center">
-      <p class="font-semibold text-slate-700 dark:text-slate-200">${new Date(v.entryTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
-      <p class="text-xs text-slate-500 dark:text-slate-400">Entrada</p>
-    </div>
-    <button data-id="${v.id}" class="register-exit-btn p-3 rounded-full text-green-600 bg-green-100 hover:bg-green-200 dark:bg-green-900/50 dark:text-green-400 dark:hover:bg-green-900/80 transition-colors" aria-label="Registrar Saída">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-6 w-6"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9"></path></svg>
-    </button>
-  </div>`;
-  
-const adminViewTemplate = () => `
-  <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md max-w-4xl mx-auto">
-    <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-6">Configurações do Estacionamento</h2>
-    <form id="settings-form" class="space-y-6">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="space-y-4 p-4 border dark:border-slate-700 rounded-lg">
-          <h3 class="font-semibold text-slate-700 dark:text-slate-200">Precificação</h3>
-          <div>
-            <label for="hourlyRate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Valor da Hora (R$)</label>
-            <input type="number" step="0.01" name="hourlyRate" id="hourlyRate" value="${settings.hourlyRate}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-          </div>
-          <div>
-            <label for="fractionRate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Valor da Fração (R$)</label>
-            <input type="number" step="0.01" name="fractionRate" id="fractionRate" value="${settings.fractionRate}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-          </div>
-        </div>
-        <div class="space-y-4 p-4 border dark:border-slate-700 rounded-lg">
-          <h3 class="font-semibold text-slate-700 dark:text-slate-200">Regras de Tempo</h3>
-          <div>
-            <label for="toleranceMinutes" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Minutos de Tolerância</label>
-            <input type="number" name="toleranceMinutes" id="toleranceMinutes" value="${settings.toleranceMinutes}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-          </div>
-          <div>
-            <label for="fractionLimitMinutes" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Limite da Fração (Minutos)</label>
-            <input type="number" name="fractionLimitMinutes" id="fractionLimitMinutes" value="${settings.fractionLimitMinutes}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-          </div>
-        </div>
-      </div>
-      <div class="space-y-4 p-4 border dark:border-slate-700 rounded-lg">
-        <h3 class="font-semibold text-slate-700 dark:text-slate-200">Configurações PIX</h3>
-        <div>
-          <label for="pixKey" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Chave PIX</label>
-          <input type="text" name="pixKey" id="pixKey" value="${settings.pixKey}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-        </div>
-        <div>
-          <label for="pixHolderName" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Nome do Titular</label>
-          <input type="text" name="pixHolderName" id="pixHolderName" value="${settings.pixHolderName}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-        </div>
-        <div>
-          <label for="pixHolderCity" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Cidade do Titular</label>
-          <input type="text" name="pixHolderCity" id="pixHolderCity" value="${settings.pixHolderCity}" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-slate-500 dark:focus:border-slate-500">
-        </div>
-      </div>
-      <p class="text-sm text-slate-500 dark:text-slate-400 text-center">As alterações são salvas automaticamente.</p>
-    </form>
-  </div>`;
-  
-const reportsViewTemplate = (reportData) => {
-    const { title, totalRevenue, vehiclesToDisplay, displayedTotal, paymentMethodFilter, activeFilter } = reportData;
-    const paymentMethodLabels = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão', convenio: 'Convênio' };
-    const compactDateTime = (isoString) => {
-        if (!isoString) return '...';
-        return new Date(isoString).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+// --- HELPERS ---
+const formatCurrency = (value) => value ? `R$ ${parseFloat(value).toFixed(2).replace('.', ',')}` : 'R$ 0,00';
+const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+const debounce = (func, delay) => {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), delay);
     };
+};
+const applyTheme = () => {
+    if (state.theme === 'dark') {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('theme', state.theme);
+}
 
-    const periodFilters = [
-        { period: 'today', label: 'Hoje' }, { period: '7days', label: '7 Dias' },
-        { period: '15days', label: '15 Dias' }, { period: '30days', label: '30 Dias' },
-    ];
-    const paymentFilters = [
-        { method: 'all', label: 'Todos' }, { method: 'pix', label: 'PIX' }, { method: 'cash', label: 'Dinheiro' },
-        { method: 'card', label: 'Cartão' }, { method: 'convenio', label: 'Convênio' },
-    ];
+// --- CORE LOGIC ---
+const calculateParkingFee = (entryTime, exitTime) => {
+    const entry = new Date(entryTime);
+    const exit = new Date(exitTime);
+    const diffMs = exit - entry;
+    const diffMins = Math.ceil(diffMs / (1000 * 60));
 
-    return `
-    <div class="space-y-8">
-      <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-        <h2 class="text-2xl font-bold text-slate-800 dark:text-slate-100">${title}</h2>
-        <div class="flex items-center space-x-2 p-1 bg-slate-200 dark:bg-slate-800 rounded-lg">
-          ${periodFilters.map(({period, label}) => `
-            <button data-period="${period}" class="period-filter-btn px-4 py-2 text-sm font-semibold rounded-md transition-colors ${activeFilter === period ? 'bg-blue-600 text-white shadow-sm dark:bg-slate-600' : 'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'}">
-              ${label}
-            </button>
-          `).join('')}
-        </div>
-      </div>
-      
-      <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md">
-        <p class="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">Total Arrecadado no Período</p>
-        <p class="text-3xl font-bold text-slate-800 dark:text-slate-100">R$ ${totalRevenue.toFixed(2).replace('.', ',')}</p>
-      </div>
-
-      <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md">
-        <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-4">Saídas Registradas no Período</h3>
-        <div class="mb-4 p-3 bg-slate-100 dark:bg-slate-900 rounded-lg">
-          <div class="flex flex-nowrap items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
-            ${paymentFilters.map(({method, label}) => `
-                <button data-method="${method}" class="payment-filter-btn px-3 py-1 text-xs sm:text-sm font-semibold rounded-full transition-colors flex-shrink-0 ${paymentMethodFilter === method ? 'bg-blue-600 text-white shadow-sm dark:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'}">
-                    ${label}
-                </button>
-            `).join('')}
-          </div>
-          <div class="text-right border-t dark:border-slate-700 pt-2">
-              <span class="text-sm font-medium text-slate-600 dark:text-slate-400">Total (${paymentMethodFilter === 'all' ? 'Todos' : paymentMethodLabels[paymentMethodFilter]}): </span>
-              <span class="text-lg font-bold text-slate-800 dark:text-slate-100">R$ ${displayedTotal.toFixed(2).replace('.', ',')}</span>
-          </div>
-        </div>
-
-        <div class="space-y-4">
-          ${vehiclesToDisplay.length > 0 ? vehiclesToDisplay.slice().reverse().map(v => {
-            let durationString = 'N/A';
-            if (v.exitTime) {
-              const durationMs = new Date(v.exitTime).getTime() - new Date(v.entryTime).getTime();
-              const totalMinutes = Math.max(1, Math.ceil(durationMs / 60000));
-              const hours = Math.floor(totalMinutes / 60);
-              const minutes = totalMinutes % 60;
-              durationString = `${hours}h ${minutes}m`;
-            }
-            return `
-              <div class="bg-slate-50 dark:bg-slate-900 p-4 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col gap-3">
-                <div class="flex justify-between items-start">
-                  <div>
-                    <p class="font-mono text-lg font-bold text-slate-800 dark:text-slate-100">${v.plate}</p>
-                    <p class="text-sm text-slate-500 dark:text-slate-400">${v.brand} - ${v.color}</p>
-                  </div>
-                  <div class="text-right">
-                    <p class="text-lg font-semibold text-green-600 dark:text-green-400">R$ ${v.amountPaid?.toFixed(2).replace('.', ',')}</p>
-                    <span class="text-xs font-semibold capitalize bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-full">${v.paymentMethod ? paymentMethodLabels[v.paymentMethod] : '-'}</span>
-                  </div>
-                </div>
-                <div class="grid grid-cols-3 gap-2 text-center text-sm border-t dark:border-slate-600 pt-3">
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Entrada</p>
-                    <p class="font-semibold text-slate-700 dark:text-slate-200">${compactDateTime(v.entryTime)}</p>
-                  </div>
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Saída</p>
-                    <p class="font-semibold text-slate-700 dark:text-slate-200">${compactDateTime(v.exitTime)}</p>
-                  </div>
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Permanência</p>
-                    <p class="font-semibold text-slate-700 dark:text-slate-200">${durationString}</p>
-                  </div>
-                </div>
-              </div>
-            `;
-          }).join('') : `<div class="text-center py-10 text-slate-500 dark:text-slate-400"><p>Nenhuma saída registrada para o filtro selecionado.</p></div>`}
-        </div>
-      </div>
-    </div>`;
+    if (diffMins <= state.settings.toleranceMinutes) {
+        return 0;
+    }
+    if (diffMins <= state.settings.fractionLimitMinutes) {
+        return state.settings.fractionRate;
+    }
+    const diffHours = Math.ceil(diffMins / 60);
+    return diffHours * state.settings.hourlyRate;
 };
 
-const exitModalTemplate = (vehicle, calculation) => {
-    const { total, durationMinutes, entry, exit, breakdown } = calculation;
-    const durationHours = Math.floor(durationMinutes / 60);
-    const durationMins = durationMinutes % 60;
-    
+// --- RENDER FUNCTIONS ---
+const renderHeader = () => {
+    const isDark = state.theme === 'dark';
     return `
-    <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-lg w-full p-6 space-y-6">
-        <div class="flex justify-between items-start">
-            <div>
-                <h2 class="text-2xl font-bold text-slate-800 dark:text-slate-100">Registrar Saída</h2>
-                <p class="font-mono text-lg font-bold text-slate-600 dark:text-slate-300">${vehicle.plate}</p>
+        <header class="flex flex-col items-center md:flex-row md:justify-between mb-6 space-y-4 md:space-y-0">
+            <h1 class="text-3xl font-bold text-sky-500">Pare Aqui!!</h1>
+            <div class="flex items-center space-x-4">
+                <nav class="flex space-x-2 bg-slate-200 dark:bg-slate-800 p-1 rounded-full">
+                    <button data-action="navigate" data-page="operational" class="${state.currentPage === 'operational' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Operacional</button>
+                    <button data-action="navigate" data-page="reports" class="${state.currentPage === 'reports' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Relatórios</button>
+                    <button data-action="navigate" data-page="admin" class="${state.currentPage === 'admin' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Configurações</button>
+                </nav>
+                <button data-action="toggle-theme" class="p-2 rounded-full bg-slate-200 dark:bg-slate-800">
+                    ${isDark ? 
+                        `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" /></svg>` : 
+                        `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM10 16a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM4.95 14.536a1 1 0 001.414 1.414l.707-.707a1 1 0 00-1.414-1.414l-.707-.707zm10.607-2.12a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM4.95 5.464a1 1 0 001.414-1.414l.707.707a1 1 0 00-1.414 1.414l-.707-.707z" clip-rule="evenodd" /></svg>` 
+                    }
+                </button>
             </div>
-            <button id="close-modal-btn" class="p-1 rounded-full text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-700">&times;</button>
-        </div>
-
-        <div class="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-lg grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
-            <div>
-                <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Entrada</p>
-                <p class="font-semibold text-slate-700 dark:text-slate-200">${entry.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</p>
-            </div>
-            <div>
-                <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Saída</p>
-                <p class="font-semibold text-slate-700 dark:text-slate-200">${exit.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</p>
-            </div>
-            <div class="col-span-2 sm:col-span-1">
-                <p class="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Permanência</p>
-                <p class="font-semibold text-slate-700 dark:text-slate-200">${durationHours}h ${durationMins}m</p>
-            </div>
-        </div>
-
-        <div class="text-center">
-            <p class="text-sm font-medium text-slate-500 dark:text-slate-400">Total a Pagar</p>
-            <p class="text-5xl font-bold text-slate-800 dark:text-slate-100">R$ ${total.toFixed(2).replace('.', ',')}</p>
-            <p class="text-xs text-slate-400">${breakdown}</p>
-        </div>
-
-        <div id="payment-area" class="${total <= 0 ? 'hidden' : ''}">
-            <p class="text-center font-semibold text-slate-700 dark:text-slate-300 mb-3">Forma de Pagamento</p>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-                <button data-method="pix" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">PIX</button>
-                <button data-method="cash" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Dinheiro</button>
-                <button data-method="card" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Cartão</button>
-                <button data-method="convenio" class="payment-method-btn flex-1 p-2 border-2 border-transparent rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600">Convênio</button>
-            </div>
-            <div id="pix-qr-code-container" class="hidden flex flex-col items-center justify-center p-4 bg-slate-100 dark:bg-slate-700 rounded-lg">
-                <p class="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">Escaneie para pagar com PIX</p>
-                <div id="pix-qr-code" class="bg-white p-2 rounded-md"></div>
-            </div>
-        </div>
-
-        <button id="confirm-exit-btn" data-vehicle-id="${vehicle.id}" data-amount="${total}" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed" ${total > 0 ? 'disabled' : ''}>
-          ${total > 0 ? 'Selecione o Pagamento' : 'Confirmar Saída (Tolerância)'}
-        </button>
-    </div>
+        </header>
     `;
 };
 
-const scannerModalTemplate = () => `
-  <div class="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-lg w-full p-4 space-y-4">
-    <div class="flex justify-between items-center">
-      <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100">Escanear Placa</h2>
-      <button id="close-modal-btn" class="p-1 rounded-full text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-700">&times;</button>
-    </div>
-    <div class="bg-black rounded-md overflow-hidden relative">
-      <video id="scanner-video" class="w-full" playsinline></video>
-      <div class="absolute inset-0 flex items-center justify-center p-4">
-        <div class="w-full h-1/3 border-4 border-dashed border-white/50 rounded-lg"></div>
-      </div>
-    </div>
-    <p id="scanner-status" class="text-center text-sm text-slate-500 dark:text-slate-400 h-5">Aponte a câmera para a placa do veículo.</p>
-    <button id="capture-plate-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500">Capturar e Ler Placa</button>
-  </div>
-`;
+const renderOperationalPage = () => {
+    const parkedVehicles = state.vehicles.filter(v => v.status === 'parked').sort((a, b) => new Date(b.entryTime) - new Date(a.entryTime));
+    const vehicleList = parkedVehicles.length > 0 ? parkedVehicles.map(v => `
+        <li class="flex items-center justify-between p-3 bg-slate-200 dark:bg-slate-800 rounded-lg border-l-4 border-sky-500 dark:border-sky-500">
+            <div>
+                <p class="font-mono text-lg font-bold">${v.plate}</p>
+                <p class="text-sm text-slate-600 dark:text-slate-400">${v.brand} - ${v.color}</p>
+                <p class="text-sm text-slate-600 dark:text-slate-400">Entrada: ${formatDate(v.entryTime)}</p>
+            </div>
+            <button data-action="start-exit-vehicle" data-id="${v.id}" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Registrar Saída</button>
+        </li>
+    `).join('') : '<p class="text-center text-slate-500 dark:text-slate-400 py-4">Pátio vazio.</p>';
 
-// --- THEME ---
-const applyTheme = (theme) => {
-    localStorage.setItem('theme', theme);
-    if (theme === 'dark') {
-        htmlEl.classList.add('dark');
-        themeIconMoon.classList.add('hidden');
-        themeIconSun.classList.remove('hidden');
-    } else {
-        htmlEl.classList.remove('dark');
-        themeIconMoon.classList.remove('hidden');
-        themeIconSun.classList.add('hidden');
+    const brands = ["Fiat", "Chevrolet", "Volkswagen", "Ford", "Renault", "Hyundai", "Toyota", "Honda", "Jeep", "Nissan", "Citroën", "Peugeot", "Mitsubishi", "Caoa Chery", "BMW", "Mercedes-Benz", "Audi", "Kia", "Land Rover", "Volvo"];
+    const colors = ["Preto", "Branco", "Prata", "Cinza", "Vermelho", "Azul", "Marrom", "Verde", "Amarelo", "Dourado", "Laranja", "Roxo"];
+
+    return `
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="md:col-span-1 bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
+                <h2 class="text-xl font-bold mb-4">Registrar Entrada</h2>
+                <form id="add-vehicle-form" class="space-y-4">
+                    <div class="relative">
+                        <label for="plate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Placa</label>
+                        <div class="flex items-center">
+                            <input type="text" id="plate" name="plate" required class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md text-sm shadow-sm placeholder-slate-400 focus:outline-none focus:ring-sky-500 focus:border-sky-500" placeholder="ABC-1234">
+                            <button type="button" data-action="open-scanner" class="ml-2 p-2 rounded-md bg-sky-500 text-white hover:bg-sky-600">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586l-.707-.707A2 2 0 0012.414 4H7.586a2 2 0 00-1.293.293L5.586 5H4zm6 8a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="brand" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Marca</label>
+                        <select id="brand" name="brand" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md text-sm shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500">
+                            ${brands.map(b => `<option value="${b}">${b}</option>`).join('')}
+                        </select>
+                    </div>
+                     <div>
+                        <label for="color" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Cor</label>
+                        <select id="color" name="color" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md text-sm shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500">
+                             ${colors.map(c => `<option value="${c}">${c}</option>`).join('')}
+                        </select>
+                    </div>
+                    <button type="submit" data-action="add-vehicle" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Adicionar Veículo</button>
+                </form>
+            </div>
+            <div class="md:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
+                <h2 class="text-xl font-bold mb-4">Veículos no Pátio (${parkedVehicles.length})</h2>
+                <ul class="space-y-3 max-h-96 overflow-y-auto pr-2">${vehicleList}</ul>
+            </div>
+        </div>
+        <div id="modal-container"></div>
+    `;
+};
+
+const renderReportsPage = () => {
+    const paidVehicles = state.vehicles.filter(v => v.status === 'paid').sort((a, b) => new Date(b.exitTime) - new Date(a.exitTime));
+    const totalRevenue = paidVehicles.filter(v => v.paymentMethod !== 'convenio').reduce((acc, v) => acc + (v.amountPaid || 0), 0);
+    const vehicleList = paidVehicles.length > 0 ? paidVehicles.map(v => `
+        <tr class="border-b border-slate-200 dark:border-slate-700">
+            <td class="p-3 font-mono">${v.plate}</td>
+            <td class="p-3">${formatDate(v.entryTime)}</td>
+            <td class="p-3">${formatDate(v.exitTime)}</td>
+            <td class="p-3 capitalize">${v.paymentMethod || 'N/A'}</td>
+            <td class="p-3 text-right font-semibold">${formatCurrency(v.amountPaid)}</td>
+        </tr>
+    `).join('') : '<tr><td colspan="5" class="text-center p-4 text-slate-500 dark:text-slate-400">Nenhum registro de saída.</td></tr>';
+
+    return `
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold mb-4">Relatórios de Faturamento</h2>
+            <div class="mb-6 p-4 bg-sky-100 dark:bg-sky-900/50 rounded-lg">
+                <p class="text-lg text-slate-600 dark:text-slate-300">Faturamento Total (exceto convênio):</p>
+                <p class="text-4xl font-bold text-sky-600 dark:text-sky-400">${formatCurrency(totalRevenue)}</p>
+            </div>
+            <h3 class="text-xl font-bold mb-2">Histórico de Saídas</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-slate-100 dark:bg-slate-700 text-sm uppercase">
+                        <tr>
+                            <th class="p-3">Placa</th>
+                            <th class="p-3">Entrada</th>
+                            <th class="p-3">Saída</th>
+                            <th class="p-3">Pagamento</th>
+                            <th class="p-3 text-right">Valor Pago</th>
+                        </tr>
+                    </thead>
+                    <tbody>${vehicleList}</tbody>
+                </table>
+            </div>
+        </div>
+    `;
+};
+
+const renderAdminPage = () => {
+    const { settings } = state;
+    return `
+        <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold mb-4">Configurações do Sistema</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Precificação</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="hourlyRate" class="block text-sm font-medium">Valor da Hora (R$)</label>
+                            <input type="number" id="hourlyRate" data-setting="hourlyRate" value="${settings.hourlyRate}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                        <div>
+                            <label for="toleranceMinutes" class="block text-sm font-medium">Minutos de Tolerância</label>
+                            <input type="number" id="toleranceMinutes" data-setting="toleranceMinutes" value="${settings.toleranceMinutes}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                         <div>
+                            <label for="fractionRate" class="block text-sm font-medium">Valor da Fração (R$)</label>
+                            <input type="number" id="fractionRate" data-setting="fractionRate" value="${settings.fractionRate}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                        <div>
+                            <label for="fractionLimitMinutes" class="block text-sm font-medium">Limite da Fração (minutos)</label>
+                            <input type="number" id="fractionLimitMinutes" data-setting="fractionLimitMinutes" value="${settings.fractionLimitMinutes}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                    </div>
+                </div>
+                 <div>
+                    <h3 class="text-lg font-semibold mb-2">Configurações PIX</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="pixKey" class="block text-sm font-medium">Chave PIX</label>
+                            <input type="text" id="pixKey" data-setting="pixKey" value="${settings.pixKey}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                        <div>
+                            <label for="pixHolderName" class="block text-sm font-medium">Nome do Titular</label>
+                            <input type="text" id="pixHolderName" data-setting="pixHolderName" value="${settings.pixHolderName}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                         <div>
+                            <label for="pixHolderCity" class="block text-sm font-medium">Cidade do Titular</label>
+                            <input type="text" id="pixHolderCity" data-setting="pixHolderCity" value="${settings.pixHolderCity}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+};
+
+const renderCheckoutSelectionPage = () => {
+    const vehicle = state.vehicles.find(v => v.id === state.selectedVehicleId);
+    if (!vehicle) {
+        state.currentPage = 'operational';
+        return renderApp();
+    }
+
+    const exitTime = new Date();
+    const amount = calculateParkingFee(vehicle.entryTime, exitTime);
+    const entry = new Date(vehicle.entryTime);
+    const diffMs = exitTime - entry;
+    const diffMins = Math.floor(diffMs / 60000);
+    const hours = Math.floor(diffMins / 60);
+    const minutes = diffMins % 60;
+    const permanence = `${hours}h ${minutes}min`;
+
+    state.paymentData = { vehicle, exitTime: exitTime.toISOString(), amount, permanence };
+
+    return `
+       <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto">
+            <div class="flex justify-between items-start">
+                <h2 class="text-2xl font-bold mb-4">Registrar Saída</h2>
+                <button data-action="navigate" data-page="operational" class="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">&times;</button>
+            </div>
+            <div class="mb-4 p-4 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                <p><strong>Placa:</strong> ${vehicle.plate}</p>
+                <p><strong>Permanência:</strong> ${permanence}</p>
+                <p class="text-2xl font-bold mt-2">Total a Pagar: ${formatCurrency(amount)}</p>
+            </div>
+            <h3 class="text-lg font-semibold mb-3">Selecione a Forma de Pagamento:</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <button data-action="select-payment-method" data-method="pix" class="p-4 bg-sky-500 text-white rounded-lg font-semibold text-center hover:bg-sky-600 transition-colors">PIX</button>
+                <button data-action="select-payment-method" data-method="dinheiro" class="p-4 bg-green-500 text-white rounded-lg font-semibold text-center hover:bg-green-600 transition-colors">Dinheiro</button>
+                <button data-action="select-payment-method" data-method="cartao" class="p-4 bg-orange-500 text-white rounded-lg font-semibold text-center hover:bg-orange-600 transition-colors">Cartão</button>
+                <button data-action="select-payment-method" data-method="convenio" class="p-4 bg-slate-500 text-white rounded-lg font-semibold text-center hover:bg-slate-600 transition-colors">Convênio</button>
+            </div>
+        </div>
+    `;
+}
+
+const renderPixPaymentPage = () => {
+    const { vehicle, amount, permanence } = state.paymentData;
+    return `
+        <div id="pix-payment-page" class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto text-center">
+            <h2 class="text-2xl font-bold mb-2">Pagamento com PIX</h2>
+            <p class="mb-4">Total: <span class="font-bold text-lg">${formatCurrency(amount)}</span></p>
+            <div id="qrcode-container" class="flex justify-center my-4">
+                 <div class="loader"></div>
+                 <p class="mt-2">Gerando QR Code...</p>
+            </div>
+            <p id="pix-status" class="font-semibold text-lg text-yellow-500">Aguardando Pagamento...</p>
+            <p class="text-sm text-slate-500 mt-2">Escaneie o QR Code com o app do seu banco.</p>
+            <button data-action="cancel-payment" class="mt-6 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
+                Cancelar / Trocar Método
+            </button>
+        </div>
+    `;
+};
+
+const renderStandardPaymentPage = (method) => {
+    const { vehicle, amount, permanence } = state.paymentData;
+    const methodColors = {
+        dinheiro: "bg-green-500 hover:bg-green-600",
+        cartao: "bg-orange-500 hover:bg-orange-600",
+        convenio: "bg-slate-500 hover:bg-slate-600"
+    };
+
+    return `
+         <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-lg mx-auto">
+            <h2 class="text-2xl font-bold mb-2">Confirmar Pagamento</h2>
+            <div class="mb-4 p-4 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                <p><strong>Placa:</strong> ${vehicle.plate}</p>
+                <p><strong>Permanência:</strong> ${permanence}</p>
+                <p class="text-2xl font-bold mt-2">Total a Pagar: ${formatCurrency(amount)}</p>
+                <p class="mt-2"><strong>Método:</strong> <span class="capitalize font-semibold">${method}</span></p>
+            </div>
+             <button data-action="confirm-payment" data-method="${method}" class="w-full text-white font-bold py-3 px-4 rounded-lg transition-colors text-lg ${methodColors[method]}">
+                Confirmar Saída e Registrar Pagamento
+            </button>
+            <button data-action="cancel-payment" class="mt-4 w-full bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 font-bold py-2 px-4 rounded-lg transition-colors">
+                Trocar Método
+            </button>
+        </div>
+    `;
+};
+
+const renderSuccessPage = () => {
+    const { vehicle, amount, exitTime, permanence, paymentMethod } = state.paymentData;
+    return `
+        <div id="receipt-container" class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg max-w-md mx-auto text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-green-500 mx-auto mb-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+            </svg>
+            <h2 class="text-2xl font-bold mb-2">Pagamento Aprovado!</h2>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">Seu recibo está sendo preparado para impressão.</p>
+            <div class="text-left my-6 space-y-2 p-4 border-t border-b border-dashed border-slate-300 dark:border-slate-600">
+                 <h3 class="text-center font-bold text-lg mb-4">CUPOM NÃO FISCAL</h3>
+                 <p><strong>Placa:</strong> <span class="font-mono float-right">${vehicle.plate}</span></p>
+                 <p><strong>Entrada:</strong> <span class="font-mono float-right">${formatDate(vehicle.entryTime)}</span></p>
+                 <p><strong>Saída:</strong> <span class="font-mono float-right">${formatDate(exitTime)}</span></p>
+                 <p><strong>Permanência:</strong> <span class="font-mono float-right">${permanence}</span></p>
+                 <p><strong>Pagamento:</strong> <span class="font-mono float-right capitalize">${paymentMethod}</span></p>
+                 <p class="text-xl font-bold mt-4"><strong>TOTAL PAGO:</strong> <span class="font-mono float-right">${formatCurrency(amount)}</span></p>
+            </div>
+            <button id="print-button" data-action="print-receipt" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-4 rounded-lg transition-colors mb-2">Imprimir Cupom</button>
+            <button data-action="navigate" data-page="operational" class="w-full bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Voltar ao Pátio</button>
+        </div>
+    `;
+}
+
+const renderScannerModal = () => {
+    return `
+        <div id="scanner-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-xl w-full max-w-lg">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-lg font-bold">Escanear Placa</h3>
+                    <button data-action="close-modal">&times;</button>
+                </div>
+                <div class="relative w-full aspect-video bg-black rounded-md overflow-hidden">
+                    <video id="scanner-video" class="w-full h-full" autoplay playsinline></video>
+                    <div class="absolute inset-0 flex items-center justify-center p-4">
+                        <div class="w-full h-1/3 border-4 border-dashed border-red-500 opacity-75"></div>
+                    </div>
+                </div>
+                <p id="scanner-status" class="text-center mt-2 text-sm">Aponte a câmera para a placa...</p>
+            </div>
+        </div>
+    `;
+};
+
+
+let renderApp = () => {
+    const appEl = document.getElementById('app');
+    if (!appEl) return;
+
+    let content = '';
+    switch (state.currentPage) {
+        case 'operational':
+            content = renderOperationalPage();
+            break;
+        case 'reports':
+            content = renderReportsPage();
+            break;
+        case 'admin':
+            content = renderAdminPage();
+            break;
+        case 'checkout-selection':
+            content = renderCheckoutSelectionPage();
+            break;
+        case 'checkout-pix':
+            content = renderPixPaymentPage();
+            break;
+        case 'checkout-standard':
+            content = renderStandardPaymentPage(state.paymentData.paymentMethod);
+            break;
+        case 'checkout-success':
+            content = renderSuccessPage();
+            break;
+        default:
+            content = renderOperationalPage();
+    }
+    appEl.innerHTML = renderHeader() + content;
+};
+
+
+// --- EVENT HANDLERS & ACTIONS ---
+let pixPollingInterval = null;
+const handleAppClick = (e) => {
+    const target = e.target.closest('[data-action]');
+    if (!target) return;
+
+    const action = target.dataset.action;
+    const page = target.dataset.page;
+    const id = target.dataset.id;
+    const method = target.dataset.method;
+
+    switch (action) {
+        case 'navigate':
+            state.currentPage = page;
+            renderApp();
+            break;
+        case 'toggle-theme':
+            state.theme = state.theme === 'dark' ? 'light' : 'dark';
+            applyTheme();
+            renderApp();
+            break;
+        case 'add-vehicle':
+            e.preventDefault();
+            const form = document.getElementById('add-vehicle-form');
+            const plate = form.plate.value.toUpperCase().trim();
+            const brand = form.brand.value;
+            const color = form.color.value;
+
+            if (plate) {
+                const newVehicle = {
+                    id: `v_${Date.now()}`,
+                    plate,
+                    brand,
+                    color,
+                    entryTime: new Date().toISOString(),
+                    status: 'parked'
+                };
+                db.ref('vehicles').push(newVehicle);
+                form.reset();
+            }
+            break;
+        case 'start-exit-vehicle':
+            state.selectedVehicleId = id;
+            state.currentPage = 'checkout-selection';
+            renderApp();
+            break;
+        case 'select-payment-method':
+            state.paymentData.paymentMethod = method;
+            if (method === 'pix') {
+                state.currentPage = 'checkout-pix';
+                renderApp();
+                startPixPayment();
+            } else {
+                state.currentPage = 'checkout-standard';
+                renderApp();
+            }
+            break;
+        case 'cancel-payment':
+            clearInterval(pixPollingInterval);
+            state.currentPage = 'checkout-selection';
+            renderApp();
+            break;
+        case 'confirm-payment':
+            if (state.paymentData) {
+                finishPayment(method);
+            }
+            break;
+        case 'print-receipt':
+             window.print();
+             break;
+        case 'open-scanner':
+            e.preventDefault();
+            document.getElementById('modal-container').innerHTML = renderScannerModal();
+            startScanner();
+            break;
+        case 'close-modal':
+            stopScanner();
+            document.getElementById('modal-container').innerHTML = '';
+            break;
     }
 };
-const toggleTheme = () => {
-    const currentTheme = localStorage.getItem('theme') || 'light';
-    applyTheme(currentTheme === 'light' ? 'dark' : 'light');
+
+const handleSettingsChange = debounce((e) => {
+    const target = e.target.closest('[data-setting]');
+    if (target) {
+        const key = target.dataset.setting;
+        const value = target.type === 'number' ? parseFloat(target.value) : target.value;
+        db.ref('settings').child(key).set(value);
+    }
+}, 500);
+
+const finishPayment = (paymentMethod) => {
+    const { vehicle, exitTime, amount } = state.paymentData;
+    const vehicleUpdates = {
+        status: 'paid',
+        exitTime: exitTime,
+        amountPaid: amount,
+        paymentMethod: paymentMethod
+    };
+
+    const dbKey = state.vehicles.find(v => v.id === vehicle.id).__dbKey;
+    if (dbKey) {
+        db.ref('vehicles').child(dbKey).update(vehicleUpdates).then(() => {
+            state.currentPage = 'checkout-success';
+            renderApp();
+            // Aciona a impressão automaticamente após renderizar a tela de sucesso
+            setTimeout(() => {
+                window.print();
+            }, 500); 
+        });
+    }
 };
 
-// --- MODAL & OVERLAY ---
-const showModal = (content) => {
-    modalContainer.innerHTML = content;
-    modalContainer.classList.remove('hidden');
-    document.getElementById('close-modal-btn')?.addEventListener('click', hideModal);
+// --- MERCADO PAGO PIX ---
+const startPixPayment = async () => {
+    if (MERCADO_PAGO_ACCESS_TOKEN === "SEU_ACCESS_TOKEN_DO_MЕРСАDO_PAGO_AQUI") {
+        document.getElementById('qrcode-container').innerHTML = `<p class="text-red-500">Erro: Configure seu Access Token do Mercado Pago em index.js</p>`;
+        return;
+    }
+    const { vehicle, amount } = state.paymentData;
+    if (amount <= 0) {
+        finishPayment('pix'); // Free exit
+        return;
+    }
+
+    try {
+        const response = await fetch('https://api.mercadopago.com/v1/payments', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                transaction_amount: amount,
+                description: `Estacionamento Placa ${vehicle.plate}`,
+                payment_method_id: 'pix',
+                payer: {
+                    email: 'test_user_123456@testuser.com' // Required by Mercado Pago
+                }
+            })
+        });
+        const data = await response.json();
+        if (data.point_of_interaction) {
+            const qrCodeData = data.point_of_interaction.transaction_data.qr_code;
+            const qrCodeBase64 = data.point_of_interaction.transaction_data.qr_code_base64;
+            
+            const qrcodeContainer = document.getElementById('qrcode-container');
+            qrcodeContainer.innerHTML = `<img src="data:image/png;base64,${qrCodeBase64}" alt="PIX QR Code" class="mx-auto">`;
+
+            // Start polling for payment status
+            const paymentId = data.id;
+            pixPollingInterval = setInterval(async () => {
+                const statusResponse = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+                    headers: { 'Authorization': `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}` }
+                });
+                const statusData = await statusResponse.json();
+                if (statusData.status === 'approved') {
+                    clearInterval(pixPollingInterval);
+                    document.getElementById('pix-status').textContent = 'Pagamento Aprovado!';
+                    document.getElementById('pix-status').classList.remove('text-yellow-500');
+                    document.getElementById('pix-status').classList.add('text-green-500');
+                    setTimeout(() => finishPayment('pix'), 1000);
+                }
+            }, 3000);
+        } else {
+            throw new Error('Falha ao gerar PIX. Verifique a chave de acesso.');
+        }
+    } catch (error) {
+         document.getElementById('qrcode-container').innerHTML = `<p class="text-red-500 text-sm">${error.message}</p>`;
+         console.error(error);
+    }
 };
-const hideModal = () => {
-    modalContainer.innerHTML = '';
-    modalContainer.classList.add('hidden');
-    selectedVehicleId = null;
-    isScannerOpen = false;
+
+
+// --- PLATE SCANNER ---
+let scannerWorker = null;
+let videoStream = null;
+
+const startScanner = async () => {
+    const video = document.getElementById('scanner-video');
+    const statusEl = document.getElementById('scanner-status');
+    
+    try {
+        videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = videoStream;
+        await video.play();
+        
+        scannerWorker = await Tesseract.createWorker('por', 1, {
+            logger: m => console.log(m) 
+        });
+
+        const scan = async () => {
+            if (!videoStream) return;
+            try {
+                const { data: { text } } = await scannerWorker.recognize(video);
+                const plateRegex = /[A-Z]{3}-?[0-9][A-Z0-9][0-9]{2}/;
+                const match = text.toUpperCase().match(plateRegex);
+                if (match) {
+                    const plate = match[0].replace('-', '');
+                    document.getElementById('plate').value = plate;
+                    statusEl.textContent = `Placa encontrada: ${plate}`;
+                    statusEl.classList.add('text-green-500');
+                    setTimeout(() => {
+                        handleAppClick({ target: document.querySelector('[data-action="close-modal"]') });
+                    }, 1000);
+                } else {
+                     requestAnimationFrame(scan);
+                }
+            } catch (err) {
+                console.error('OCR Error:', err);
+                if(videoStream) requestAnimationFrame(scan);
+            }
+        };
+        requestAnimationFrame(scan);
+
+    } catch (err) {
+        let message = 'Erro ao acessar a câmera.';
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            message = 'Acesso à câmera negado. Por favor, habilite a permissão nas configurações do seu navegador para este site.';
+        }
+        statusEl.textContent = message;
+        statusEl.classList.add('text-red-500');
+        console.error('Camera Error:', err);
+    }
+};
+
+const stopScanner = async () => {
     if (videoStream) {
         videoStream.getTracks().forEach(track => track.stop());
         videoStream = null;
     }
-};
-
-// --- RENDER FUNCTIONS ---
-const renderVehicleList = () => {
-    const container = document.getElementById('vehicle-list-container');
-    const searchInput = document.getElementById('search-plate');
-    const title = document.getElementById('patio-title');
-    if (!container || !searchInput || !title) return;
-
-    const parkedVehicles = vehicles.filter(v => v.status === 'parked');
-    const query = searchInput.value.toUpperCase();
-    const filtered = parkedVehicles.filter(v => v.plate.toUpperCase().includes(query));
-    
-    title.textContent = `Veículos no Pátio (${parkedVehicles.length})`;
-
-    if (filtered.length === 0) {
-        container.innerHTML = `<p class="text-center text-slate-500 dark:text-slate-400 py-8">Pátio vazio ou nenhum veículo encontrado.</p>`;
-    } else {
-        container.innerHTML = filtered.slice().reverse().map(vehicleListItemTemplate).join('');
-    }
-    
-    document.querySelectorAll('.register-exit-btn').forEach(button => {
-        button.addEventListener('click', (e) => handleOpenExitModal(e.currentTarget.dataset.id));
-    });
-};
-
-const renderReports = () => {
-    const activeFilter = mainContent.dataset.activeFilter || 'today';
-    const paymentMethodFilter = mainContent.dataset.paymentMethodFilter || 'all';
-    const now = new Date();
-    const startDate = new Date();
-    let title = 'Relatório do Dia';
-
-    switch (activeFilter) {
-      case 'today': startDate.setHours(0, 0, 0, 0); title = `Relatório - ${now.toLocaleDateString('pt-BR')}`; break;
-      case '7days': startDate.setDate(now.getDate() - 7); startDate.setHours(0, 0, 0, 0); title = 'Relatório - Últimos 7 Dias'; break;
-      case '15days': startDate.setDate(now.getDate() - 15); startDate.setHours(0, 0, 0, 0); title = 'Relatório - Últimos 15 Dias'; break;
-      case '30days': startDate.setDate(now.getDate() - 30); startDate.setHours(0, 0, 0, 0); title = 'Relatório - Últimos 30 Dias'; break;
-    }
-
-    const periodVehicles = vehicles.filter(v => v.status === 'paid' && v.exitTime && new Date(v.exitTime) >= startDate);
-    const totalRevenue = periodVehicles.reduce((acc, v) => acc + (v.amountPaid || 0), 0);
-    const vehiclesToDisplay = paymentMethodFilter === 'all' ? periodVehicles : periodVehicles.filter(v => v.paymentMethod === paymentMethodFilter);
-    const displayedTotal = vehiclesToDisplay.reduce((acc, v) => acc + (v.amountPaid || 0), 0);
-
-    const reportData = { title, totalRevenue, vehiclesToDisplay, displayedTotal, paymentMethodFilter, activeFilter };
-    mainContent.innerHTML = reportsViewTemplate(reportData);
-
-    document.querySelectorAll('.period-filter-btn').forEach(btn => btn.addEventListener('click', e => {
-        mainContent.dataset.activeFilter = e.currentTarget.dataset.period;
-        mainContent.dataset.paymentMethodFilter = 'all';
-        renderReports();
-    }));
-    document.querySelectorAll('.payment-filter-btn').forEach(btn => btn.addEventListener('click', e => {
-        mainContent.dataset.paymentMethodFilter = e.currentTarget.dataset.method;
-        renderReports();
-    }));
-};
-
-const render = () => {
-    hideModal(); // Ensure modals are closed on view change
-    switch (currentView) {
-        case 'operational':
-            mainContent.innerHTML = operationalViewTemplate();
-            renderVehicleList();
-            document.getElementById('add-vehicle-form').addEventListener('submit', handleAddVehicle);
-            document.getElementById('search-plate').addEventListener('input', renderVehicleList);
-            document.getElementById('open-scanner-btn').addEventListener('click', handleOpenScanner);
-            break;
-        case 'reports':
-            renderReports();
-            break;
-        case 'admin':
-            mainContent.innerHTML = adminViewTemplate();
-            document.getElementById('settings-form').addEventListener('input', handleSettingsChange);
-            break;
+    if (scannerWorker) {
+        await scannerWorker.terminate();
+        scannerWorker = null;
     }
 };
 
-// --- LOGIC & EVENT HANDLERS ---
-function uuidv4() {
-  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
-    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-  );
-}
-
-const handleAddVehicle = (e) => {
-    e.preventDefault();
-    const form = e.target;
-    const plateInput = form.plate;
-    const plate = plateInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-
-    if (!plate) {
-        alert("A placa é obrigatória.");
-        return;
-    }
-    if (vehicles.some(v => v.plate === plate && v.status === 'parked')) {
-        alert("Este veículo já está no pátio.");
-        return;
-    }
-
-    const newVehicle = {
-      plate,
-      brand: form.brand.value,
-      color: form.color.value,
-      id: uuidv4(),
-      entryTime: new Date().toISOString(),
-      status: 'parked',
-    };
-    db.ref('vehicles').set([...vehicles, newVehicle]);
-    form.reset();
-    plateInput.focus();
-};
-
-const handleSettingsChange = (e) => {
-    const { name, value, type } = e.target;
-    const newSettings = {
-        ...settings,
-        [name]: type === 'number' ? parseFloat(value) || 0 : value,
-    };
-    // Atualiza o estado local para refletir na UI imediatamente, se necessário
-    settings = newSettings;
-    db.ref('settings').set(newSettings);
-};
-
-const calculateFee = (vehicle) => {
-    const entry = new Date(vehicle.entryTime);
-    const exit = new Date();
-    const durationMinutes = Math.max(0, (exit.getTime() - entry.getTime()) / 60000);
-    const roundedDuration = Math.round(durationMinutes);
-
-    if (roundedDuration <= settings.toleranceMinutes) {
-        return { total: 0, durationMinutes: roundedDuration, entry, exit, breakdown: 'Dentro da tolerância' };
-    }
-
-    if (roundedDuration <= settings.fractionLimitMinutes) {
-        return { total: settings.fractionRate, durationMinutes: roundedDuration, entry, exit, breakdown: `Fração de ${settings.fractionLimitMinutes}m` };
-    }
-    
-    // Se passar do limite da fração, cobra por hora cheia, arredondando para cima.
-    const hours = Math.ceil(roundedDuration / 60);
-    const total = hours * settings.hourlyRate;
-    const breakdown = `${hours}h (${hours > 1 ? 'horas' : 'hora'})`;
-
-    return { total, durationMinutes: roundedDuration, entry, exit, breakdown };
-}
-
-
-const handleOpenExitModal = (vehicleId) => {
-    const vehicle = vehicles.find(v => v.id === vehicleId);
-    if (!vehicle) return;
-    
-    selectedVehicleId = vehicleId;
-    const calculation = calculateFee(vehicle);
-    showModal(exitModalTemplate(vehicle, calculation));
-
-    const confirmBtn = document.getElementById('confirm-exit-btn');
-    let selectedMethod = null;
-
-    if (calculation.total > 0) {
-        document.querySelectorAll('.payment-method-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const method = e.target.dataset.method;
-                selectedMethod = method;
-
-                // Estilo do botão selecionado
-                document.querySelectorAll('.payment-method-btn').forEach(b => b.classList.remove('bg-blue-600', 'text-white', 'dark:bg-blue-500', 'border-blue-500'));
-                e.target.classList.add('bg-blue-600', 'text-white', 'dark:bg-blue-500', 'border-blue-500');
-                
-                confirmBtn.disabled = false;
-                confirmBtn.textContent = 'Confirmar Saída';
-
-                const pixContainer = document.getElementById('pix-qr-code-container');
-                if (method === 'pix') {
-                    const qrCodeEl = document.getElementById('pix-qr-code');
-                    qrCodeEl.innerHTML = '';
-                    new QRCode(qrCodeEl, {
-                        text: generatePixPayload(calculation.total),
-                        width: 150,
-                        height: 150,
-                    });
-                    pixContainer.classList.remove('hidden');
-                } else {
-                    pixContainer.classList.add('hidden');
-                }
-            });
-        });
-    }
-
-    confirmBtn.addEventListener('click', (e) => {
-        const updatedVehicles = vehicles.map(v => {
-            if (v.id === e.target.dataset.vehicleId) {
-                return {
-                    ...v,
-                    status: 'paid',
-                    exitTime: new Date().toISOString(),
-                    amountPaid: parseFloat(e.target.dataset.amount),
-                    paymentMethod: calculation.total > 0 ? selectedMethod : 'tolerance'
-                };
-            }
-            return v;
-        });
-        db.ref('vehicles').set(updatedVehicles);
-        hideModal();
-    });
-};
-
-const generatePixPayload = (amount) => {
-    const format = (id, value) => {
-        const len = value.length.toString().padStart(2, '0');
-        return `${id}${len}${value}`;
-    };
-    const key = settings.pixKey || '';
-    const name = (settings.pixHolderName || 'NOME').substring(0, 25);
-    const city = (settings.pixHolderCity || 'CIDADE').substring(0, 15);
-    const amountStr = amount.toFixed(2);
-    
-    let payload = '';
-    payload += format('00', '01');
-    payload += format('26', format('00', 'br.gov.bcb.pix') + format('01', key));
-    payload += format('52', '0000');
-    payload += format('53', '986');
-    payload += format('54', amountStr);
-    payload += format('58', 'BR');
-    payload += format('59', name);
-    payload += format('60', city);
-    payload += format('62', format('05', '***'));
-    payload += '6304'; // CRC16 placeholder start
-
-    // Basic CRC16 calculation
-    let crc = 0xFFFF;
-    for (let i = 0; i < payload.length; i++) {
-        crc ^= payload.charCodeAt(i) << 8;
-        for (let j = 0; j < 8; j++) {
-            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
-        }
-    }
-    const crc16 = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
-    return payload + crc16;
-};
-
-const handleOpenScanner = async () => {
-    isScannerOpen = true;
-    showModal(scannerModalTemplate());
-    const video = document.getElementById('scanner-video');
-    const statusEl = document.getElementById('scanner-status');
-
-    try {
-        videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        video.srcObject = videoStream;
-        video.play();
-        document.getElementById('capture-plate-btn').addEventListener('click', () => recognizePlate(video, statusEl));
-    } catch (err) {
-        console.error("Error accessing camera: ", err);
-        statusEl.textContent = 'Erro ao acessar a câmera.';
-        statusEl.classList.add('text-red-500');
-    }
-};
-
-const recognizePlate = async (video, statusEl) => {
-    if (!TESSERACT_WORKER) {
-        statusEl.textContent = 'Inicializando leitor...';
-        TESSERACT_WORKER = await Tesseract.createWorker('eng', 1, {
-            logger: m => console.log(m)
-        });
-        await TESSERACT_WORKER.setParameters({
-            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-        });
-    }
-    
-    statusEl.textContent = 'Lendo placa...';
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const { data: { text } } = await TESSERACT_WORKER.recognize(canvas);
-    const cleanedText = text.replace(/[^A-Z0-9]/g, '');
-    
-    // Basic validation for Mercosul (LLLNLNN) or traditional (LLLNNNN) plates
-    const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}/;
-    const match = cleanedText.match(plateRegex);
-
-    if (match) {
-        const foundPlate = match[0];
-        document.getElementById('plate').value = foundPlate;
-        statusEl.textContent = `Placa encontrada: ${foundPlate}`;
-        hideModal();
-    } else {
-        statusEl.textContent = 'Nenhuma placa válida encontrada. Tente novamente.';
-    }
-};
-
-const switchView = (view) => {
-    currentView = view;
-    navButtons.forEach(button => {
-        const baseClasses = 'nav-button px-4 py-2 text-sm sm:text-base font-semibold rounded-md transition-colors';
-        if (button.dataset.view === view) {
-            button.className = `${baseClasses} bg-blue-600 text-white shadow dark:bg-slate-600`;
-        } else {
-            button.className = `${baseClasses} bg-white text-slate-600 hover:bg-slate-100 dark:bg-transparent dark:text-slate-300 dark:hover:bg-slate-600`;
-        }
-    });
-    render();
-};
 
 // --- INITIALIZATION ---
-const init = () => {
-    const savedTheme = localStorage.getItem('theme') || 'light';
-    applyTheme(savedTheme);
-    themeToggle.addEventListener('click', toggleTheme);
-    navButtons.forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
-    
-    db.ref('vehicles').on('value', snapshot => {
-        const val = snapshot.val();
-        // Firebase retorna um objeto se as chaves forem numéricas, então convertemos para array
-        if (val && !Array.isArray(val)) {
-            vehicles = Object.values(val);
-        } else {
-            vehicles = val || [];
-        }
-        if (currentView === 'operational') renderVehicleList();
-        if (currentView === 'reports') renderReports();
+const setupFirebaseListeners = () => {
+    db.ref('vehicles').on('value', (snapshot) => {
+        const data = snapshot.val();
+        const vehiclesArray = data ? Object.keys(data).map(key => ({
+            ...data[key],
+            __dbKey: key // Store the Firebase key
+        })) : [];
+        state.vehicles = vehiclesArray;
+        renderApp();
     });
-    db.ref('settings').on('value', snapshot => {
-        settings = snapshot.val() || INITIAL_SETTINGS;
-        if (!snapshot.val()) {
-          db.ref('settings').set(INITIAL_SETTINGS);
+
+    db.ref('settings').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            state.settings = { ...state.settings, ...data };
         }
-        if (currentView === 'admin') {
-          // Re-renderiza a view admin para garantir que os valores nos inputs estejam atualizados
-          mainContent.innerHTML = adminViewTemplate();
-          document.getElementById('settings-form').addEventListener('input', handleSettingsChange);
+        // Don't re-render if we are on the admin page to avoid losing focus
+        if (state.currentPage !== 'admin') {
+            renderApp();
         }
     });
-    switchView('operational');
 };
+
+const init = () => {
+    applyTheme();
+    setupFirebaseListeners();
+    document.addEventListener('click', handleAppClick);
+    document.getElementById('app').addEventListener('input', handleSettingsChange);
+};
+
+// --- START APP ---
 init();
