@@ -1,4 +1,5 @@
 
+
 import { db } from './firebase.js';
 
 let state = {
@@ -537,9 +538,7 @@ const renderScannerModal = () => {
                 </div>
                 <div class="relative w-full aspect-video bg-black rounded-md overflow-hidden">
                     <video id="scanner-video" class="w-full h-full" autoplay playsinline></video>
-                    <div class="absolute inset-0 flex items-center justify-center p-4">
-                        <div class="w-full h-1/3 border-4 border-dashed border-red-500 opacity-75"></div>
-                    </div>
+                    <div id="scanner-guide" class="absolute top-[25%] left-[5%] w-[90%] h-[50%] border-4 border-dashed border-red-500 opacity-75 rounded-lg pointer-events-none"></div>
                 </div>
                 <div id="scanner-controls" class="text-center mt-4 space-y-2">
                     <p id="scanner-status" class="text-sm h-5">Aponte a câmera para a placa e clique em escanear.</p>
@@ -610,11 +609,12 @@ let renderApp = () => {
 const scanPlate = async () => {
     const video = document.getElementById('scanner-video');
     const statusEl = document.getElementById('scanner-status');
+    const guideBox = document.getElementById('scanner-guide');
     const actionButtons = document.getElementById('scanner-action-buttons');
     const confirmationButtons = document.getElementById('scanner-confirmation-buttons');
     const resultDisplay = document.getElementById('scanner-result-display');
 
-    if (!videoStream) {
+    if (!videoStream || !guideBox) {
         statusEl.textContent = 'Câmera não iniciada.';
         return;
     }
@@ -628,7 +628,19 @@ const scanPlate = async () => {
              scannerWorker = await Tesseract.createWorker('por');
         }
 
-        const { data: { text } } = await scannerWorker.recognize(video);
+        // Calculate the rectangle for recognition based on the guide box
+        const scaleX = video.videoWidth / video.clientWidth;
+        const scaleY = video.videoHeight / video.clientHeight;
+
+        const rectangle = {
+            top: guideBox.offsetTop * scaleY,
+            left: guideBox.offsetLeft * scaleX,
+            width: guideBox.offsetWidth * scaleX,
+            height: guideBox.offsetHeight * scaleY
+        };
+
+        const { data: { text } } = await scannerWorker.recognize(video, { rectangle });
+        
         const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/;
         const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
         const match = cleanedText.match(plateRegex);
