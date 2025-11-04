@@ -1,3 +1,4 @@
+
 import { db } from './firebase.js';
 import { GoogleGenAI } from 'https://esm.run/@google/genai';
 
@@ -1027,11 +1028,35 @@ const finishPayment = (paymentMethod) => {
 const startScanner = async () => {
     const video = document.getElementById('scanner-video');
     const statusEl = document.getElementById('scanner-status');
-    
+    const scannerControls = document.getElementById('scanner-controls');
+
+    const showPermissionError = () => {
+        const statusHTML = `<span class="text-red-500 font-semibold">Acesso à câmera negado.</span>`;
+        if (scannerControls) {
+            scannerControls.innerHTML = `
+                <p id="scanner-status" class="text-sm h-5 flex items-center justify-center">${statusHTML}</p>
+                <p class="text-sm text-center text-slate-500 dark:text-slate-400 mt-4 px-4">
+                    Para usar o scanner, você precisa permitir o acesso à câmera nas configurações do seu navegador ou sistema operacional.
+                </p>
+                <button data-action="close-modal" class="mt-4 w-full bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    Entendi
+                </button>
+            `;
+        }
+    };
+
     try {
+        if (navigator.permissions && navigator.permissions.query) {
+            const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+            if (permissionStatus.state === 'denied') {
+                showPermissionError();
+                return;
+            }
+        }
+        
         statusEl.innerHTML = `
             <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            Iniciando câmera...`;
+            Solicitando permissão...`;
 
         videoStream = await navigator.mediaDevices.getUserMedia({ 
             video: { 
@@ -1043,20 +1068,24 @@ const startScanner = async () => {
         video.srcObject = videoStream;
         await video.play();
 
-        statusEl.innerHTML = `
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            Procurando placa...`;
+        const currentStatusEl = document.getElementById('scanner-status');
+        if (currentStatusEl) {
+            currentStatusEl.innerHTML = `
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                Procurando placa...`;
+        }
         
         if (scanInterval) clearInterval(scanInterval);
         scanInterval = setInterval(scanPlate, 3000);
 
     } catch (err) {
-        let message = 'Erro ao acessar a câmera.';
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            message = 'Acesso à câmera negado. Por favor, habilite a permissão nas configurações do seu navegador para este site.';
-        }
-        if(statusEl) statusEl.innerHTML = `<span class="text-red-500">${message}</span>`;
         console.error('Camera Error:', err);
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            showPermissionError();
+        } else {
+            const errorStatusEl = document.getElementById('scanner-status');
+            if(errorStatusEl) errorStatusEl.innerHTML = `<span class="text-red-500">Erro ao iniciar câmera. Verifique se o dispositivo está conectado.</span>`;
+        }
     }
 };
 
