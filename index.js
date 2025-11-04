@@ -700,6 +700,12 @@ let renderApp = () => {
     appEl.innerHTML = renderHeader() + content;
     
     // After rendering, add specific listeners
+    if (state.currentPage === 'operational') {
+        const searchInput = document.getElementById('plate-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', handleOperationalSearch);
+        }
+    }
     if (state.currentPage === 'checkout-pix') {
         initializePixScreen();
     }
@@ -959,17 +965,23 @@ const handleSettingsChange = debounce((e) => {
 }, 300);
 
 const handleOperationalSearch = debounce((e) => {
-    if (e.target.id === 'plate-search') {
-        state.operationalSearchQuery = e.target.value;
-        if (state.currentPage === 'operational') {
-            updateVehicleList();
-        }
+    state.operationalSearchQuery = e.target.value;
+    if (state.currentPage === 'operational') {
+        updateVehicleList();
     }
 }, 300);
 
 const handleAppInput = (e) => {
+    const target = e.target;
+    // Force plate inputs to uppercase
+    if (target.id === 'plate' || target.id === 'plate-search') {
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        target.value = target.value.toUpperCase();
+        target.setSelectionRange(start, end);
+    }
+
     handleSettingsChange(e);
-    handleOperationalSearch(e);
 };
 
 
