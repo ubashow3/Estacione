@@ -614,8 +614,8 @@ const scanPlate = async () => {
     const confirmationButtons = document.getElementById('scanner-confirmation-buttons');
     const resultDisplay = document.getElementById('scanner-result-display');
 
-    if (!videoStream || !guideBox) {
-        statusEl.textContent = 'Câmera não iniciada.';
+    if (!videoStream || !guideBox || video.readyState < video.HAVE_METADATA) {
+        statusEl.textContent = 'Câmera não iniciada ou pronta.';
         return;
     }
 
@@ -628,18 +628,28 @@ const scanPlate = async () => {
              scannerWorker = await Tesseract.createWorker('por');
         }
 
-        // Calculate the rectangle for recognition based on the guide box
+        // Create a canvas to draw the cropped video frame
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+
+        // Calculate the cropping rectangle based on the guide box's position relative to the video element
         const scaleX = video.videoWidth / video.clientWidth;
         const scaleY = video.videoHeight / video.clientHeight;
 
-        const rectangle = {
-            top: guideBox.offsetTop * scaleY,
-            left: guideBox.offsetLeft * scaleX,
-            width: guideBox.offsetWidth * scaleX,
-            height: guideBox.offsetHeight * scaleY
-        };
+        const cropX = guideBox.offsetLeft * scaleX;
+        const cropY = guideBox.offsetTop * scaleY;
+        const cropWidth = guideBox.offsetWidth * scaleX;
+        const cropHeight = guideBox.offsetHeight * scaleY;
 
-        const { data: { text } } = await scannerWorker.recognize(video, { rectangle });
+        // Set canvas dimensions to the cropped size
+        canvas.width = cropWidth;
+        canvas.height = cropHeight;
+
+        // Draw the cropped portion of the video onto the canvas
+        context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+        
+        // Use the canvas for recognition
+        const { data: { text } } = await scannerWorker.recognize(canvas);
         
         const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/;
         const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -665,6 +675,7 @@ const scanPlate = async () => {
         actionButtons.classList.remove('hidden');
     }
 };
+
 
 // --- EVENT HANDLERS & ACTIONS ---
 const handleAppClick = (e) => {
