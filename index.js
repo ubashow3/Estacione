@@ -25,6 +25,10 @@ let state = {
     scannerTargetInputId: null,
 };
 
+// Hidden admin feature state
+let headerClickCount = 0;
+let headerClickTimer = null;
+
 
 // --- HELPERS ---
 const formatCurrency = (value) => value || value === 0 ? `R$ ${parseFloat(value).toFixed(2).replace('.', ',')}` : 'R$ 0,00';
@@ -119,7 +123,7 @@ const calculateParkingFee = (entryTime, exitTime) => {
 const renderHeader = () => {
     return `
         <header class="flex flex-col items-center md:flex-row md:justify-between mb-6 space-y-4 md:space-y-0">
-            <h1 class="text-3xl font-bold text-sky-500 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-car-front"><path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.64 5H8.36a2 2 0 0 0-1.86 1.3L5 10l-2-2"/><path d="M5 10h14"/><path d="M5 12.5v3.76a2 2 0 0 0 1.11 1.79l.9.44a2 2 0 0 0 1.98 0l.9-.44A2 2 0 0 0 11 16.26V12.5"/><path d="M19 12.5v3.76a2 2 0 0 1-1.11 1.79l-.9.44a2 2 0 0 1-1.98 0l-.9-.44A2 2 0 0 1 13 16.26V12.5"/><path d="M5 18h.01"/><path d="M19 18h.01"/></svg>Pare Aqui!!</h1>
+            <h1 class="text-3xl font-bold text-sky-500 flex items-center gap-2 cursor-pointer" data-action="header-title-click"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-car-front"><path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.64 5H8.36a2 2 0 0 0-1.86 1.3L5 10l-2-2"/><path d="M5 10h14"/><path d="M5 12.5v3.76a2 2 0 0 0 1.11 1.79l.9.44a2 2 0 0 0 1.98 0l.9-.44A2 2 0 0 0 11 16.26V12.5"/><path d="M19 12.5v3.76a2 2 0 0 1-1.11 1.79l-.9.44a2 2 0 0 1-1.98 0l-.9-.44A2 2 0 0 1 13 16.26V12.5"/><path d="M5 18h.01"/><path d="M19 18h.01"/></svg>Pare Aqui!!</h1>
             <div class="flex items-center space-x-4">
                 <nav class="flex space-x-2 bg-slate-200 dark:bg-slate-800 p-1 rounded-full">
                     <button data-action="navigate" data-page="operational" class="${state.currentPage === 'operational' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Operacional</button>
@@ -562,6 +566,44 @@ const renderScannerModal = () => {
     `;
 };
 
+const renderResetPasswordModal = () => {
+    const modalContainer = document.getElementById('modal-container');
+    modalContainer.innerHTML = `
+        <div id="reset-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-sm text-center">
+                <h3 class="text-lg font-bold mb-4">Acesso Restrito</h3>
+                <p class="text-sm mb-4">Digite a senha para acessar a área de reset.</p>
+                <input type="password" id="reset-password-input" class="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md mb-4" placeholder="Senha">
+                <p id="reset-error" class="text-red-500 text-sm h-5 mb-2"></p>
+                <div class="flex space-x-2">
+                    <button data-action="cancel-reset" class="w-1/2 bg-slate-500 text-white px-4 py-2 rounded-lg hover:bg-slate-600">Cancelar</button>
+                    <button data-action="confirm-reset-password" class="w-1/2 bg-sky-500 text-white px-4 py-2 rounded-lg hover:bg-sky-600">Entrar</button>
+                </div>
+            </div>
+        </div>
+    `;
+};
+
+const renderResetConfirmationModal = () => {
+     const modalContainer = document.getElementById('modal-container');
+     modalContainer.innerHTML = `
+        <div id="reset-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-sm text-center">
+                <h3 class="text-xl font-bold mb-2 text-red-500">ATENÇÃO!</h3>
+                <p class="text-sm mb-4">
+                    Tem certeza que deseja resetar a aplicação? Todos os dados de veículos e relatórios serão 
+                    <strong class="font-bold">apagados permanentemente</strong>. 
+                    As configurações serão mantidas.
+                </p>
+                <div class="flex space-x-2 mt-6">
+                    <button data-action="cancel-reset" class="w-1/2 bg-slate-500 text-white px-4 py-2 rounded-lg hover:bg-slate-600">Cancelar</button>
+                    <button data-action="confirm-reset-app" class="w-1/2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">RESETAR DADOS</button>
+                </div>
+            </div>
+        </div>
+    `;
+};
+
 
 let renderApp = () => {
     const appEl = document.getElementById('app');
@@ -686,6 +728,18 @@ const scanPlate = async () => {
 // --- EVENT HANDLERS & ACTIONS ---
 const handleAppClick = (e) => {
     const target = e.target.closest('[data-action]');
+    
+    // Handle hidden reset feature
+    if (e.target.closest('[data-action="header-title-click"]')) {
+        clearTimeout(headerClickTimer);
+        headerClickCount++;
+        if (headerClickCount === 5) {
+            headerClickCount = 0;
+            renderResetPasswordModal();
+        }
+        headerClickTimer = setTimeout(() => { headerClickCount = 0; }, 1500); // Reset after 1.5 seconds
+    }
+    
     if (!target) return;
 
     const action = target.dataset.action;
@@ -777,7 +831,8 @@ const handleAppClick = (e) => {
                 }
             }
             
-            const closeModalButton = document.querySelector('[data-action="close-modal"]');
+            // Re-use close-modal logic
+            const closeModalButton = document.querySelector('#scanner-modal [data-action="close-modal"]');
             if (closeModalButton) handleAppClick({ target: closeModalButton });
 
             if (state.scannerTargetInputId === 'plate-search') {
@@ -798,6 +853,29 @@ const handleAppClick = (e) => {
         case 'set-report-payment-filter':
             state.reportsPaymentFilter = filter;
             renderApp();
+            break;
+        case 'confirm-reset-password':
+            const passwordInput = document.getElementById('reset-password-input');
+            const errorEl = document.getElementById('reset-error');
+            if (passwordInput.value === 'cambio') {
+                renderResetConfirmationModal();
+            } else {
+                errorEl.textContent = 'Senha incorreta.';
+                passwordInput.value = '';
+            }
+            break;
+        case 'cancel-reset':
+             document.getElementById('modal-container').innerHTML = '';
+             headerClickCount = 0;
+            break;
+        case 'confirm-reset-app':
+            db.ref('vehicles').remove().then(() => {
+                alert('Dados resetados com sucesso!');
+                document.getElementById('modal-container').innerHTML = '';
+                headerClickCount = 0;
+            }).catch((err) => {
+                alert('Erro ao resetar os dados: ' + err.message);
+            });
             break;
     }
 };
