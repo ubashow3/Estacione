@@ -1,4 +1,5 @@
 
+
 import { db } from './firebase.js';
 
 let state = {
@@ -104,19 +105,46 @@ const generateBRCode = (pixKey, holderName, city, amount, txid = '***') => {
 
 // --- CORE LOGIC ---
 const calculateParkingFee = (entryTime, exitTime) => {
+    const { hourlyRate, toleranceMinutes, fractionRate, fractionLimitMinutes } = state.settings;
+
     const entry = new Date(entryTime);
     const exit = new Date(exitTime);
     const diffMs = exit - entry;
-    const diffMins = Math.ceil(diffMs / (1000 * 60));
+    const totalMinutes = Math.ceil(diffMs / (1000 * 60));
 
-    if (diffMins <= state.settings.toleranceMinutes) {
+    // Se o tempo for zero ou negativo, não há cobrança.
+    if (totalMinutes <= 0) {
         return 0;
     }
-    if (diffMins <= state.settings.fractionLimitMinutes) {
-        return state.settings.fractionRate;
+
+    // REGRA 1: De 1 a 60 minutos, paga uma hora cheia.
+    if (totalMinutes <= 60) {
+        return hourlyRate;
     }
-    const diffHours = Math.ceil(diffMins / 60);
-    return diffHours * state.settings.hourlyRate;
+
+    // A partir de 61 minutos:
+    const fullHours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = totalMinutes % 60;
+
+    // Se for exatamente uma hora cheia (ex: 120 min), não há minutos restantes.
+    if (remainingMinutes === 0) {
+        return fullHours * hourlyRate;
+    }
+    
+    // REGRA 2: Se os minutos restantes estiverem dentro da tolerância, pague apenas pelas horas cheias.
+    if (remainingMinutes <= toleranceMinutes) {
+        return fullHours * hourlyRate;
+    }
+
+    // REGRA 3: Se passar da tolerância mas estiver abaixo do limite da fração, pague as horas + fração.
+    if (remainingMinutes < fractionLimitMinutes) {
+        return (fullHours * hourlyRate) + fractionRate;
+    } 
+    
+    // REGRA 4: Se atingir ou passar o limite da fração, arredonde para a próxima hora cheia.
+    else { // remainingMinutes >= fractionLimitMinutes
+        return (fullHours + 1) * hourlyRate;
+    }
 };
 
 // --- RENDER FUNCTIONS ---
@@ -351,7 +379,7 @@ const renderAdminPage = () => {
                             <input type="number" id="hourlyRate" data-setting="hourlyRate" value="${settings.hourlyRate}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
                         </div>
                         <div>
-                            <label for="toleranceMinutes" class="block text-sm font-medium">Minutos de Tolerância</label>
+                            <label for="toleranceMinutes" class="block text-sm font-medium">Minutos de Tolerância (após 1ª hora)</label>
                             <input type="number" id="toleranceMinutes" data-setting="toleranceMinutes" value="${settings.toleranceMinutes}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
                         </div>
                     </div>
@@ -361,7 +389,7 @@ const renderAdminPage = () => {
                             <input type="number" id="fractionRate" data-setting="fractionRate" value="${settings.fractionRate}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
                         </div>
                         <div>
-                            <label for="fractionLimitMinutes" class="block text-sm font-medium">Limite da Fração (minutos)</label>
+                            <label for="fractionLimitMinutes" class="block text-sm font-medium">Minuto Limite para Fração (após tolerância)</label>
                             <input type="number" id="fractionLimitMinutes" data-setting="fractionLimitMinutes" value="${settings.fractionLimitMinutes}" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md">
                         </div>
                     </div>
