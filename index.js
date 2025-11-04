@@ -1,5 +1,4 @@
 
-
 import { db } from './firebase.js';
 
 let state = {
@@ -22,6 +21,8 @@ let state = {
     paymentPollingInterval: null,
     reportsDateFilter: 'today', // today, 7days, 15days, 30days
     reportsPaymentFilter: 'todos', // todos, pix, dinheiro, cartao, convenio
+    operationalSearchQuery: '',
+    scannerTargetInputId: null,
 };
 
 
@@ -116,8 +117,6 @@ const calculateParkingFee = (entryTime, exitTime) => {
 
 // --- RENDER FUNCTIONS ---
 const renderHeader = () => {
-    const isDark = state.theme === 'dark';
-    
     return `
         <header class="flex flex-col items-center md:flex-row md:justify-between mb-6 space-y-4 md:space-y-0">
             <h1 class="text-3xl font-bold text-sky-500 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-car-front"><path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.64 5H8.36a2 2 0 0 0-1.86 1.3L5 10l-2-2"/><path d="M5 10h14"/><path d="M5 12.5v3.76a2 2 0 0 0 1.11 1.79l.9.44a2 2 0 0 0 1.98 0l.9-.44A2 2 0 0 0 11 16.26V12.5"/><path d="M19 12.5v3.76a2 2 0 0 1-1.11 1.79l-.9.44a2 2 0 0 1-1.98 0l-.9-.44A2 2 0 0 1 13 16.26V12.5"/><path d="M5 18h.01"/><path d="M19 18h.01"/></svg>Pare Aqui!!</h1>
@@ -127,19 +126,20 @@ const renderHeader = () => {
                     <button data-action="navigate" data-page="reports" class="${state.currentPage === 'reports' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Relatórios</button>
                     <button data-action="navigate" data-page="admin" class="${state.currentPage === 'admin' ? 'bg-sky-500 text-white' : ''} px-3 py-1 rounded-full text-sm font-semibold transition-colors">Configurações</button>
                 </nav>
-                <button data-action="toggle-theme" class="p-2 rounded-full bg-slate-200 dark:bg-slate-800">
-                    ${isDark ? 
-                        `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" /></svg>` : 
-                        `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM10 16a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM4.95 14.536a1 1 0 001.414 1.414l.707-.707a1 1 0 00-1.414-1.414l-.707-.707zm10.607-2.12a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM4.95 5.464a1 1 0 001.414-1.414l.707.707a1 1 0 00-1.414 1.414l-.707-.707z" clip-rule="evenodd" /></svg>` 
-                    }
-                </button>
             </div>
         </header>
     `;
 };
 
 const renderOperationalPage = () => {
-    const parkedVehicles = state.vehicles.filter(v => v.status === 'parked').sort((a, b) => new Date(b.entryTime) - new Date(a.entryTime));
+    let parkedVehicles = state.vehicles.filter(v => v.status === 'parked');
+    
+    if (state.operationalSearchQuery) {
+        parkedVehicles = parkedVehicles.filter(v => v.plate.toUpperCase().includes(state.operationalSearchQuery.toUpperCase()));
+    }
+    
+    parkedVehicles.sort((a, b) => new Date(b.entryTime) - new Date(a.entryTime));
+
     const vehicleList = parkedVehicles.length > 0 ? parkedVehicles.map(v => `
         <li class="flex items-center justify-between p-3 bg-slate-200 dark:bg-slate-800 rounded-lg border-l-4 border-sky-500 dark:border-sky-500">
             <div>
@@ -149,7 +149,7 @@ const renderOperationalPage = () => {
             </div>
             <button data-action="start-exit-vehicle" data-id="${v.id}" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Registrar Saída</button>
         </li>
-    `).join('') : '<p class="text-center text-slate-500 dark:text-slate-400 py-4">Pátio vazio.</p>';
+    `).join('') : '<p class="text-center text-slate-500 dark:text-slate-400 py-4">Pátio vazio ou nenhum veículo encontrado.</p>';
 
     const brands = ["Fiat", "Chevrolet", "Volkswagen", "Ford", "Renault", "Hyundai", "Toyota", "Honda", "Jeep", "Nissan", "Citroën", "Peugeot", "Mitsubishi", "Caoa Chery", "BMW", "Mercedes-Benz", "Audi", "Kia", "Land Rover", "Volvo"];
     const colors = ["Preto", "Branco", "Prata", "Cinza", "Vermelho", "Azul", "Marrom", "Verde", "Amarelo", "Dourado", "Laranja", "Roxo"];
@@ -163,7 +163,7 @@ const renderOperationalPage = () => {
                         <label for="plate" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Placa</label>
                         <div class="flex items-center">
                             <input type="text" id="plate" name="plate" required class="mt-1 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md text-sm shadow-sm placeholder-slate-400 focus:outline-none focus:ring-sky-500 focus:border-sky-500" placeholder="ABC-1234">
-                            <button type="button" data-action="open-scanner" class="ml-2 p-2 rounded-md bg-sky-500 text-white hover:bg-sky-600">
+                            <button type="button" data-action="open-scanner" data-target-input="plate" class="ml-2 p-2 rounded-md bg-sky-500 text-white hover:bg-sky-600">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586l-.707-.707A2 2 0 0012.414 4H7.586a2 2 0 00-1.293.293L5.586 5H4zm6 8a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
                             </button>
                         </div>
@@ -185,6 +185,12 @@ const renderOperationalPage = () => {
             </div>
             <div class="md:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
                 <h2 class="text-xl font-bold mb-4">Veículos no Pátio (${parkedVehicles.length})</h2>
+                <div class="flex items-center mb-4">
+                    <input type="text" id="plate-search" placeholder="Buscar por placa..." class="block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md text-sm shadow-sm placeholder-slate-400 focus:outline-none focus:ring-sky-500 focus:border-sky-500" value="${state.operationalSearchQuery}">
+                    <button type="button" data-action="open-scanner" data-target-input="plate-search" class="ml-2 p-2 flex-shrink-0 rounded-md bg-sky-500 text-white hover:bg-sky-600">
+                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586l-.707-.707A2 2 0 0012.414 4H7.586a2 2 0 00-1.293.293L5.586 5H4zm6 8a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                    </button>
+                </div>
                 <ul class="space-y-3 max-h-96 overflow-y-auto pr-2">${vehicleList}</ul>
             </div>
         </div>
@@ -693,11 +699,6 @@ const handleAppClick = (e) => {
             state.currentPage = page;
             renderApp();
             break;
-        case 'toggle-theme':
-            state.theme = state.theme === 'dark' ? 'light' : 'dark';
-            applyTheme();
-            renderApp();
-            break;
         case 'add-vehicle':
             e.preventDefault();
             const form = document.getElementById('add-vehicle-form');
@@ -752,23 +753,36 @@ const handleAppClick = (e) => {
             break;
         case 'open-scanner':
             e.preventDefault();
+            const targetInputId = target.dataset.targetInput || 'plate';
+            state.scannerTargetInputId = targetInputId;
             document.getElementById('modal-container').innerHTML = renderScannerModal();
             startScanner();
             break;
         case 'close-modal':
             stopScanner();
             document.getElementById('modal-container').innerHTML = '';
+            state.scannerTargetInputId = null;
             break;
         case 'scan-plate':
             scanPlate();
             break;
         case 'accept-scan':
             const resultEl = document.getElementById('scanner-result-display');
-            if (resultEl && resultEl.dataset.plate) {
-                document.getElementById('plate').value = resultEl.dataset.plate;
+            const targetInput = state.scannerTargetInputId ? document.getElementById(state.scannerTargetInputId) : null;
+            
+            if (resultEl && resultEl.dataset.plate && targetInput) {
+                targetInput.value = resultEl.dataset.plate;
+                if (state.scannerTargetInputId === 'plate-search') {
+                    state.operationalSearchQuery = resultEl.dataset.plate;
+                }
             }
+            
             const closeModalButton = document.querySelector('[data-action="close-modal"]');
             if (closeModalButton) handleAppClick({ target: closeModalButton });
+
+            if (state.scannerTargetInputId === 'plate-search') {
+                renderApp();
+            }
             break;
         case 'retry-scan':
             document.getElementById('scanner-status').textContent = 'Aponte a câmera para a placa e clique em escanear.';
@@ -801,6 +815,21 @@ const handleSettingsChange = debounce((e) => {
         db.ref('settings').child(key).set(value);
     }
 }, 300);
+
+const handleOperationalSearch = debounce((e) => {
+    if (e.target.id === 'plate-search') {
+        state.operationalSearchQuery = e.target.value;
+        if (state.currentPage === 'operational') {
+            renderApp();
+        }
+    }
+}, 300);
+
+const handleAppInput = (e) => {
+    handleSettingsChange(e);
+    handleOperationalSearch(e);
+};
+
 
 const finishPayment = (paymentMethod) => {
     // Stop polling if it's running
@@ -1043,7 +1072,7 @@ const init = () => {
     applyTheme();
     setupFirebaseListeners();
     document.addEventListener('click', handleAppClick);
-    document.getElementById('app').addEventListener('input', handleSettingsChange);
+    document.getElementById('app').addEventListener('input', handleAppInput);
 };
 
 // --- START APP ---
