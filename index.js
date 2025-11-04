@@ -168,7 +168,7 @@ const renderHeader = () => {
     `;
 };
 
-const renderOperationalPage = () => {
+const getVehicleListHTML = () => {
     let parkedVehicles = state.vehicles.filter(v => v.status === 'parked');
     
     if (state.operationalSearchQuery) {
@@ -177,7 +177,7 @@ const renderOperationalPage = () => {
     
     parkedVehicles.sort((a, b) => new Date(b.entryTime) - new Date(a.entryTime));
 
-    const vehicleList = parkedVehicles.length > 0 ? parkedVehicles.map(v => `
+    const html = parkedVehicles.length > 0 ? parkedVehicles.map(v => `
         <li class="flex items-center justify-between p-3 bg-slate-200 dark:bg-slate-800 rounded-lg border-l-4 border-sky-500 dark:border-sky-500">
             <div>
                 <p class="font-mono text-lg font-bold">${v.plate}</p>
@@ -187,6 +187,26 @@ const renderOperationalPage = () => {
             <button data-action="start-exit-vehicle" data-id="${v.id}" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Registrar Saída</button>
         </li>
     `).join('') : '<p class="text-center text-slate-500 dark:text-slate-400 py-4">Pátio vazio ou nenhum veículo encontrado.</p>';
+
+    return { html, count: parkedVehicles.length };
+}
+
+const updateVehicleList = () => {
+    const { html, count } = getVehicleListHTML();
+
+    const vehicleListContainer = document.querySelector('.md\\:col-span-2 ul');
+    if (vehicleListContainer) {
+        vehicleListContainer.innerHTML = html;
+    }
+
+    const vehicleCountEl = document.querySelector('.md\\:col-span-2 h2');
+    if (vehicleCountEl) {
+        vehicleCountEl.textContent = `Veículos no Pátio (${count})`;
+    }
+};
+
+const renderOperationalPage = () => {
+    const { html: vehicleList, count: parkedVehiclesCount } = getVehicleListHTML();
 
     const brands = ["Fiat", "Chevrolet", "Volkswagen", "Ford", "Renault", "Hyundai", "Toyota", "Honda", "Jeep", "Nissan", "Citroën", "Peugeot", "Mitsubishi", "Caoa Chery", "BMW", "Mercedes-Benz", "Audi", "Kia", "Land Rover", "Volvo"];
     const colors = ["Preto", "Branco", "Prata", "Cinza", "Vermelho", "Azul", "Marrom", "Verde", "Amarelo", "Dourado", "Laranja", "Roxo"];
@@ -221,7 +241,7 @@ const renderOperationalPage = () => {
                 </form>
             </div>
             <div class="md:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl shadow-lg">
-                <h2 class="text-xl font-bold mb-4">Veículos no Pátio (${parkedVehicles.length})</h2>
+                <h2 class="text-xl font-bold mb-4">Veículos no Pátio (${parkedVehiclesCount})</h2>
                 <div class="flex items-center mb-4">
                     <input type="text" id="plate-search" placeholder="Buscar por placa..." class="block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md text-sm shadow-sm placeholder-slate-400 focus:outline-none focus:ring-sky-500 focus:border-sky-500" value="${state.operationalSearchQuery}">
                     <button type="button" data-action="open-scanner" data-target-input="plate-search" class="ml-2 p-2 flex-shrink-0 rounded-md bg-sky-500 text-white hover:bg-sky-600">
@@ -865,17 +885,16 @@ const handleAppClick = (e) => {
             if (resultEl && resultEl.dataset.plate && targetInput) {
                 targetInput.value = resultEl.dataset.plate;
                 if (state.scannerTargetInputId === 'plate-search') {
+                    // Update state and re-render only the list
                     state.operationalSearchQuery = resultEl.dataset.plate;
+                    updateVehicleList(); 
                 }
             }
             
             // Re-use close-modal logic
             const closeModalButton = document.querySelector('#scanner-modal [data-action="close-modal"]');
             if (closeModalButton) handleAppClick({ target: closeModalButton });
-
-            if (state.scannerTargetInputId === 'plate-search') {
-                renderApp();
-            }
+            
             break;
         case 'retry-scan':
             document.getElementById('scanner-status').innerHTML = `
@@ -943,7 +962,7 @@ const handleOperationalSearch = debounce((e) => {
     if (e.target.id === 'plate-search') {
         state.operationalSearchQuery = e.target.value;
         if (state.currentPage === 'operational') {
-            renderApp();
+            updateVehicleList();
         }
     }
 }, 300);
