@@ -30,6 +30,11 @@ let state = {
 let headerClickCount = 0;
 let headerClickTimer = null;
 
+// Plate Scanner State
+let scannerWorker = null;
+let videoStream = null;
+let scanInterval = null;
+
 
 // --- HELPERS ---
 const formatCurrency = (value) => value || value === 0 ? `R$ ${parseFloat(value).toFixed(2).replace('.', ',')}` : 'R$ 0,00';
@@ -577,13 +582,17 @@ const renderScannerModal = () => {
                 <div class="relative w-full aspect-video bg-black rounded-md overflow-hidden">
                     <video id="scanner-video" class="w-full h-full" autoplay playsinline></video>
                     <div id="scanner-guide" class="absolute top-[25%] left-[5%] w-[90%] h-[50%] border-4 border-dashed border-red-500 opacity-75 rounded-lg pointer-events-none"></div>
+                    <canvas id="scanner-canvas" class="hidden"></canvas> <!-- Canvas for pre-processing -->
                 </div>
                 <div id="scanner-controls" class="text-center mt-4 space-y-2">
-                    <p id="scanner-status" class="text-sm h-5">Aponte a câmera para a placa e clique em escanear.</p>
+                    <p id="scanner-status" class="text-sm h-5 flex items-center justify-center">
+                        <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Procurando placa...
+                    </p>
                     <div id="scanner-result-display" class="hidden font-mono text-lg my-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-md"></div>
-                    <div id="scanner-action-buttons">
-                        <button data-action="scan-plate" class="w-full bg-sky-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-sky-600 transition-colors">Escanear Placa</button>
-                    </div>
                     <div id="scanner-confirmation-buttons" class="hidden space-x-2">
                          <button data-action="accept-scan" class="w-1/2 bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition-colors">Aceitar</button>
                          <button data-action="retry-scan" class="w-1/2 bg-yellow-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-yellow-600 transition-colors">Escanear Novamente</button>
@@ -684,71 +693,75 @@ let renderApp = () => {
 
 const scanPlate = async () => {
     const video = document.getElementById('scanner-video');
-    const statusEl = document.getElementById('scanner-status');
     const guideBox = document.getElementById('scanner-guide');
-    const actionButtons = document.getElementById('scanner-action-buttons');
+    const canvas = document.getElementById('scanner-canvas');
     const confirmationButtons = document.getElementById('scanner-confirmation-buttons');
     const resultDisplay = document.getElementById('scanner-result-display');
+    const statusEl = document.getElementById('scanner-status');
 
-    if (!videoStream || !guideBox || video.readyState < video.HAVE_METADATA) {
-        statusEl.textContent = 'Câmera não iniciada ou pronta.';
+    if (confirmationButtons && !confirmationButtons.classList.contains('hidden')) {
+        return;
+    }
+    
+    if (!videoStream || !guideBox || !canvas || video.readyState < video.HAVE_METADATA) {
         return;
     }
 
-    statusEl.textContent = 'Escaneando... Por favor, aguarde.';
-    actionButtons.classList.add('hidden');
-    statusEl.classList.remove('text-red-500', 'text-green-500');
-
     try {
-        if (!scannerWorker) {
-             scannerWorker = await Tesseract.createWorker('por');
-        }
-
-        // Create a canvas to draw the cropped video frame
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-
-        // Calculate the cropping rectangle based on the guide box's position relative to the video element
+        const context = canvas.getContext('2d', { willReadFrequently: true });
         const scaleX = video.videoWidth / video.clientWidth;
         const scaleY = video.videoHeight / video.clientHeight;
-
         const cropX = guideBox.offsetLeft * scaleX;
         const cropY = guideBox.offsetTop * scaleY;
         const cropWidth = guideBox.offsetWidth * scaleX;
         const cropHeight = guideBox.offsetHeight * scaleY;
 
-        // Set canvas dimensions to the cropped size
         canvas.width = cropWidth;
         canvas.height = cropHeight;
 
-        // Draw the cropped portion of the video onto the canvas
         context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
         
-        // Use the canvas for recognition
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const contrast = 1.5;
+        const factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
+
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            const contrastedGray = factor * (gray - 128) + 128;
+            data[i] = contrastedGray;
+            data[i + 1] = contrastedGray;
+            data[i + 2] = contrastedGray;
+        }
+        context.putImageData(imageData, 0, 0);
+
         const { data: { text } } = await scannerWorker.recognize(canvas);
         
-        const plateRegex = /[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/;
+        const plateRegex = /[A-Z]{3}-?[0-9][A-Z0-9][0-9]{2}/;
         const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
         const match = cleanedText.match(plateRegex);
 
         if (match) {
-            const plate = match[0];
-            statusEl.textContent = 'Placa encontrada!';
-            statusEl.classList.add('text-green-500');
-            resultDisplay.textContent = plate;
-            resultDisplay.dataset.plate = plate;
-            resultDisplay.classList.remove('hidden');
-            confirmationButtons.classList.remove('hidden');
-        } else {
-            statusEl.textContent = 'Nenhuma placa encontrada. Tente novamente.';
-            statusEl.classList.add('text-red-500');
-            actionButtons.classList.remove('hidden');
+            if (scanInterval) {
+                clearInterval(scanInterval);
+                scanInterval = null;
+            }
+
+            let plate = match[0];
+            if (plate.length === 7 && !plate.includes('-') && !isNaN(plate.substring(3))) {
+                 plate = plate.slice(0, 3) + '-' + plate.slice(3);
+            }
+            
+            if(statusEl) statusEl.innerHTML = '<span class="text-green-500 font-semibold">Placa encontrada! Confirme abaixo.</span>';
+            if(resultDisplay) {
+                resultDisplay.textContent = plate;
+                resultDisplay.dataset.plate = plate;
+                resultDisplay.classList.remove('hidden');
+            }
+            if(confirmationButtons) confirmationButtons.classList.remove('hidden');
         }
     } catch (err) {
-        console.error('OCR Error:', err);
-        statusEl.textContent = 'Erro durante o escaneamento. Tente novamente.';
-        statusEl.classList.add('text-red-500');
-        actionButtons.classList.remove('hidden');
+        console.error('OCR Error during continuous scan:', err);
     }
 };
 
@@ -845,9 +858,6 @@ const handleAppClick = (e) => {
             document.getElementById('modal-container').innerHTML = '';
             state.scannerTargetInputId = null;
             break;
-        case 'scan-plate':
-            scanPlate();
-            break;
         case 'accept-scan':
             const resultEl = document.getElementById('scanner-result-display');
             const targetInput = state.scannerTargetInputId ? document.getElementById(state.scannerTargetInputId) : null;
@@ -868,11 +878,18 @@ const handleAppClick = (e) => {
             }
             break;
         case 'retry-scan':
-            document.getElementById('scanner-status').textContent = 'Aponte a câmera para a placa e clique em escanear.';
-            document.getElementById('scanner-status').classList.remove('text-red-500', 'text-green-500');
+            document.getElementById('scanner-status').innerHTML = `
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Procurando placa...
+            `;
             document.getElementById('scanner-result-display').classList.add('hidden');
-            document.getElementById('scanner-action-buttons').classList.remove('hidden');
             document.getElementById('scanner-confirmation-buttons').classList.add('hidden');
+            if (!scanInterval) {
+                scanInterval = setInterval(scanPlate, 2000);
+            }
             break;
         case 'set-report-date-filter':
             state.reportsDateFilter = filter;
@@ -963,36 +980,64 @@ const finishPayment = (paymentMethod) => {
 
 
 // --- PLATE SCANNER ---
-let scannerWorker = null;
-let videoStream = null;
-
 const startScanner = async () => {
     const video = document.getElementById('scanner-video');
     const statusEl = document.getElementById('scanner-status');
     
     try {
-        videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (!scannerWorker) {
+            if (statusEl) statusEl.innerHTML = `
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Carregando scanner...
+            `;
+            scannerWorker = await Tesseract.createWorker('por');
+            await scannerWorker.setParameters({
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+            });
+        }
+
+        videoStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                facingMode: 'environment',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            } 
+        });
         video.srcObject = videoStream;
         await video.play();
+
+        if (statusEl) statusEl.innerHTML = `
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Procurando placa...
+        `;
+        
+        if (scanInterval) clearInterval(scanInterval);
+        scanInterval = setInterval(scanPlate, 2000);
+
     } catch (err) {
         let message = 'Erro ao acessar a câmera.';
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             message = 'Acesso à câmera negado. Por favor, habilite a permissão nas configurações do seu navegador para este site.';
         }
-        statusEl.textContent = message;
-        statusEl.classList.add('text-red-500');
+        if(statusEl) statusEl.innerHTML = `<span class="text-red-500">${message}</span>`;
         console.error('Camera Error:', err);
     }
 };
 
-const stopScanner = async () => {
+const stopScanner = () => {
+    if (scanInterval) {
+        clearInterval(scanInterval);
+        scanInterval = null;
+    }
     if (videoStream) {
         videoStream.getTracks().forEach(track => track.stop());
         videoStream = null;
-    }
-    if (scannerWorker) {
-        await scannerWorker.terminate();
-        scannerWorker = null;
     }
 };
 
