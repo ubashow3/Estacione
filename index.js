@@ -1,10 +1,6 @@
 
 
-import { GoogleGenAI } from "@google/genai";
 import { db } from './firebase.js';
-
-// Initialize Gemini AI
-const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
 let state = {
     vehicles: [],
@@ -35,6 +31,7 @@ let headerClickCount = 0;
 let headerClickTimer = null;
 
 // Plate Scanner State
+let scannerWorker = null;
 let videoStream = null;
 let scanInterval = null;
 
@@ -605,7 +602,7 @@ const renderScannerModal = () => {
                 <div class="relative w-full aspect-video bg-black rounded-md overflow-hidden">
                     <video id="scanner-video" class="w-full h-full" autoplay playsinline></video>
                     <div id="scanner-guide" class="absolute top-[25%] left-[5%] w-[90%] h-[50%] border-4 border-dashed border-red-500 opacity-75 rounded-lg pointer-events-none"></div>
-                    <canvas id="scanner-canvas" class="hidden"></canvas> <!-- Canvas for processing -->
+                    <canvas id="scanner-canvas" class="hidden"></canvas> <!-- Canvas for pre-processing -->
                 </div>
                 <div id="scanner-controls" class="text-center mt-4 space-y-2">
                     <p id="scanner-status" class="text-sm h-5 flex items-center justify-center">
@@ -613,7 +610,7 @@ const renderScannerModal = () => {
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
-                        Iniciando...
+                        Procurando placa...
                     </p>
                     <div id="scanner-result-display" class="hidden font-mono text-lg my-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-md"></div>
                     <div id="scanner-confirmation-buttons" class="hidden space-x-2">
@@ -729,21 +726,17 @@ const scanPlate = async () => {
     const statusEl = document.getElementById('scanner-status');
 
     if (confirmationButtons && !confirmationButtons.classList.contains('hidden')) {
-        return; // Already found a plate
+        return;
     }
     
     if (!videoStream || !guideBox || !canvas || video.readyState < video.HAVE_METADATA) {
-        return; // Not ready yet
+        return;
     }
 
     try {
-        const context = canvas.getContext('2d');
-        
-        // Match canvas to video's intrinsic dimensions to capture full quality frame
+        const context = canvas.getContext('2d', { willReadFrequently: true });
         const scaleX = video.videoWidth / video.clientWidth;
         const scaleY = video.videoHeight / video.clientHeight;
-
-        // Define crop area based on the visual guide box
         const cropX = guideBox.offsetLeft * scaleX;
         const cropY = guideBox.offsetTop * scaleY;
         const cropWidth = guideBox.offsetWidth * scaleX;
@@ -752,65 +745,49 @@ const scanPlate = async () => {
         canvas.width = cropWidth;
         canvas.height = cropHeight;
 
-        // Draw the cropped frame from the video to the canvas
         context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
         
-        // Convert canvas to base64 for the API
-        const dataUrl = canvas.toDataURL('image/jpeg');
-        const base64Data = dataUrl.split(',')[1];
-        
-        const imagePart = {
-            inlineData: {
-                mimeType: 'image/jpeg',
-                data: base64Data
-            }
-        };
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const contrast = 1.5;
+        const factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
 
-        const textPart = {
-            text: "Identifique a placa do veículo nesta imagem. Responda APENAS com o texto da placa (ex: ABC1234 ou ABC-1234). Se nenhuma placa for claramente visível, responda com a palavra 'NADA'."
-        };
-        
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [imagePart, textPart] },
-        });
-        
-        const text = response.text.trim().toUpperCase();
-
-        if (text === 'NADA' || text.length < 7 || text.length > 8) {
-            console.log("Gemini: No plate found or invalid response.", text);
-            return; // Continue scanning
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            const contrastedGray = factor * (gray - 128) + 128;
+            data[i] = contrastedGray;
+            data[i + 1] = contrastedGray;
+            data[i + 2] = contrastedGray;
         }
+        context.putImageData(imageData, 0, 0);
 
-        const cleanedPlate = text.replace(/[^A-Z0-9]/g, '');
-        const plateRegex = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/;
+        const { data: { text } } = await scannerWorker.recognize(canvas);
+        
+        const plateRegex = /[A-Z]{3}-?[0-9][A-Z0-9][0-9]{2}/;
+        const cleanedText = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const match = cleanedText.match(plateRegex);
 
-        if (plateRegex.test(cleanedPlate)) {
+        if (match) {
             if (scanInterval) {
                 clearInterval(scanInterval);
                 scanInterval = null;
             }
-            
-            let formattedPlate = cleanedPlate;
-            // Add hyphen for old plate format for better readability
-            if (!isNaN(cleanedPlate.substring(3))) {
-                 formattedPlate = cleanedPlate.slice(0, 3) + '-' + cleanedPlate.slice(3);
+
+            let plate = match[0];
+            if (plate.length === 7 && !plate.includes('-') && !isNaN(plate.substring(3))) {
+                 plate = plate.slice(0, 3) + '-' + plate.slice(3);
             }
             
             if(statusEl) statusEl.innerHTML = '<span class="text-green-500 font-semibold">Placa encontrada! Confirme abaixo.</span>';
             if(resultDisplay) {
-                resultDisplay.textContent = formattedPlate;
-                resultDisplay.dataset.plate = formattedPlate;
+                resultDisplay.textContent = plate;
+                resultDisplay.dataset.plate = plate;
                 resultDisplay.classList.remove('hidden');
             }
             if(confirmationButtons) confirmationButtons.classList.remove('hidden');
-        } else {
-             console.log("Gemini: Response did not match plate format.", text);
         }
-
     } catch (err) {
-        console.error('Gemini API Error:', err);
-        if(statusEl) statusEl.innerHTML = `<span class="text-red-500 text-xs">Erro na IA. Tentando novamente...</span>`;
+        console.error('OCR Error during continuous scan:', err);
     }
 };
 
@@ -936,7 +913,7 @@ const handleAppClick = (e) => {
             document.getElementById('scanner-result-display').classList.add('hidden');
             document.getElementById('scanner-confirmation-buttons').classList.add('hidden');
             if (!scanInterval) {
-                scanInterval = setInterval(scanPlate, 2500);
+                scanInterval = setInterval(scanPlate, 2000);
             }
             break;
         case 'set-report-date-filter':
@@ -1039,14 +1016,20 @@ const startScanner = async () => {
     const statusEl = document.getElementById('scanner-status');
     
     try {
-        if (statusEl) statusEl.innerHTML = `
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Iniciando câmera...
-        `;
-        
+        if (!scannerWorker) {
+            if (statusEl) statusEl.innerHTML = `
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Carregando scanner...
+            `;
+            scannerWorker = await Tesseract.createWorker('por');
+            await scannerWorker.setParameters({
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+            });
+        }
+
         videoStream = await navigator.mediaDevices.getUserMedia({ 
             video: { 
                 facingMode: 'environment',
@@ -1066,7 +1049,7 @@ const startScanner = async () => {
         `;
         
         if (scanInterval) clearInterval(scanInterval);
-        scanInterval = setInterval(scanPlate, 2500);
+        scanInterval = setInterval(scanPlate, 2000);
 
     } catch (err) {
         let message = 'Erro ao acessar a câmera.';
